@@ -61,7 +61,7 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         self.db
     }
 
-    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
+    pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
         if index < 1 || (2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) <= index {
             return Err(TreeError::IndexOutOfBounds)
         }

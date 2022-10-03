@@ -83,7 +83,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         self.db
     }
 
-    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
+    pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
         if index < 1 || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index) {
             return Err(TreeError::IndexOutOfBounds)
         };
@@ -137,7 +137,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds)
         }
         let value_index = indices::storage_value_index(offset, self.depth);
-        let reusult = self.get(value_index);
+        let result = self.get(value_index);
 
         self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(value_index));
 
@@ -209,7 +209,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             current_value = parent_hash;
         }
 
-        self.recorder.as_ref().map(|recorder| recorder.record(value_index));
+        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(value_index));
 
         Ok(old_value)
     }
