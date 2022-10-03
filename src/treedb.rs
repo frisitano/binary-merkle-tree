@@ -60,6 +60,29 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
     pub fn db_mut(&mut self) -> &mut dyn HashDB<H, DBValue> {
         self.db
     }
+
+    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
+        if index < 1 || (2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) <= index {
+            return Err(TreeError::IndexOutOfBounds)
+        }
+
+        let key = H::hash(&index.to_le_bytes());
+        let result = self.db.get(&key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound);
+
+        result
+    }
+
+    pub fn storage_proof(&self, indices: &[usize]) -> Result<Vec<(usize, DBValue)>, TreeError> {
+        let mut proof: Vec<(usize, DBValue)> = Vec::new();
+        let authentication_indices = indices::authentication_indices(&indices, self.depth);
+
+        for node_index in indices.iter().chain(&authentication_indices) {
+            let node_data = self.get(*node_index)?;
+            proof.push((*node_index, node_data));
+        }
+
+        Ok(proof)
+    }
 }
 
 impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
@@ -71,34 +94,32 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         self.depth
     }
 
-    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1 || (2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index {
-            return Err(TreeError::IndexOutOfBounds)
-        }
-
-        let key = H::hash(&index.to_le_bytes());
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(index));
-        self.db.get(&key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)
-    }
-
     fn get_value(&self, index: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < index {
+        if 2usize.pow(self.depth as u32) <= index {
             return Err(TreeError::IndexOutOfBounds)
         }
         let value_index = indices::storage_value_index(index, self.depth);
-        self.get(value_index)
+        let result = self.get(value_index);
+
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(value_index));
+
+        result
     }
 
     fn get_leaf(&self, index: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < index {
+        if 2usize.pow(self.depth as u32) <= index {
             return Err(TreeError::IndexOutOfBounds)
         }
         let leaf_index = indices::storage_leaf_index(index, self.depth);
-        self.get(leaf_index)
+        let result = self.get(leaf_index);
+
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(leaf_index));
+
+        result
     }
 
-    fn get_proof(&self, index: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
-        let leaf_index = indices::storage_leaf_index(index, self.depth);
+    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
+        let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 
         let mut authentication_nodes = indices::authentication_indices(&[leaf_index], self.depth);
@@ -108,6 +129,8 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             let node = self.get(*node_index)?;
             proof.push((*node_index, node));
         }
+
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(leaf_index));
 
         Ok(proof)
     }

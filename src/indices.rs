@@ -38,7 +38,7 @@ pub fn difference<T: Clone + PartialEq>(a: &[T], b: &[T]) -> Vec<T> {
     a.iter().cloned().filter(|x| !b.contains(x)).collect()
 }
 
-/// Find all the node indicies in the authentication path of a set of node indices.
+/// Find all the node indices in the authentication path of a set of node indices.
 /// Used to generate inclusion proofs.
 pub fn authentication_indices(indices: &[usize], depth: usize) -> Vec<usize> {
     let mut authentication_indices = Vec::new();
@@ -59,8 +59,8 @@ pub fn storage_leaf_index(offset: usize, depth: usize) -> usize {
 }
 
 /// Determine value index given an offset and a depth.
-pub fn storage_value_index(index: usize, depth: usize) -> usize {
-    2usize.pow((depth + 1) as u32) + index
+pub fn storage_value_index(offset: usize, depth: usize) -> usize {
+    2usize.pow((depth + 1) as u32) + offset
 }
 
 #[test]

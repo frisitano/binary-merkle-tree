@@ -1,6 +1,5 @@
 use hash_db::{EMPTY_PREFIX, HashDB, HashDBRef, Hasher};
-use std::collections;
-use crate::{DBValue, indices, Tree, TreeError, TreeMut, TreeRecorder};
+use crate::{DBValue, indices, TreeError, TreeMut, TreeRecorder, rstd::BTreeMap};
 
 /// Stored item representation.
 pub enum Stored<H: Hasher> {
@@ -36,6 +35,17 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
         self.recorder = recorder.map(|r| r as _);
         self
     }
+
+    pub fn build(self) -> TreeDBMut<'db, H> {
+        TreeDBMut {
+            db: self.db,
+            storage: BTreeMap::new(),
+            uncommitted: Vec::new(),
+            root: self.root,
+            depth: self.depth,
+            recorder: self.recorder.map(core::cell::RefCell::new)
+        }
+    }
 }
 
 /// A `TreeMut` implementation using a generic `HashDB` backing database.
@@ -46,7 +56,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
 /// Querying the root or dropping the `TreeDBMut` will `commit()` stored changes.
 pub struct TreeDBMut<'a, H: Hasher> {
     db: &'a mut dyn HashDB<H, DBValue>,
-    storage: collections::BTreeMap<usize, Stored<H>>,
+    storage: BTreeMap<usize, Stored<H>>,
     uncommitted: Vec<usize>,
     root: &'a mut H::Out,
     depth: usize,
@@ -57,7 +67,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
     pub fn new(db: &'a mut dyn HashDB<H, DBValue>, root: &'a mut H::Out, depth: usize) -> Self {
         Self {
             db,
-            storage: collections::BTreeMap::new(),
+            storage: BTreeMap::new(),
             uncommitted: Vec::new(),
             root,
             depth,
@@ -71,6 +81,21 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
 
     pub fn db_mut(&mut self) -> &mut dyn HashDB<H, DBValue> {
         self.db
+    }
+
+    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
+        if index < 1 || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index) {
+            return Err(TreeError::IndexOutOfBounds)
+        };
+
+        match self.storage.get(&index) {
+            Some(Stored::Value(value)) => return Ok(value.clone()),
+            Some(Stored::Hash(hash)) => return Ok(hash.as_ref().to_vec()),
+            None => ()
+        }
+
+        let db_key = H::hash(&index.to_le_bytes());
+        self.db.get(&db_key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)
     }
 
     pub fn commit(&mut self) {
@@ -107,39 +132,32 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
         self.depth
     }
 
-    fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1 || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index) {
-            return Err(TreeError::IndexOutOfBounds)
-        };
-
-        match self.storage.get(&index) {
-            Some(Stored::Value(value)) => return Ok(value.clone()),
-            Some(Stored::Hash(hash)) => return Ok(hash.as_ref().to_vec()),
-            None => ()
-        }
-
-        let db_key = H::hash(&index.to_le_bytes());
-        self.db.get(&db_key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)
-    }
-
-    fn get_value(&self, index: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < index {
+    fn get_value(&self, offset: usize) -> Result<DBValue, TreeError> {
+        if 2usize.pow(self.depth as u32) < offset {
             return Err(TreeError::IndexOutOfBounds)
         }
-        let value_index = indices::storage_value_index(index, self.depth);
-        self.get(value_index)
+        let value_index = indices::storage_value_index(offset, self.depth);
+        let reusult = self.get(value_index);
+
+        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(value_index));
+
+        result
     }
 
-    fn get_leaf(&self, index: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < index {
+    fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError> {
+        if 2usize.pow(self.depth as u32) < offset {
             return Err(TreeError::IndexOutOfBounds)
         }
-        let leaf_index = indices::storage_leaf_index(index, self.depth);
-        self.get(leaf_index)
+        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let result = self.get(leaf_index);
+
+        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(leaf_index));
+
+        result
     }
 
-    fn get_proof(&self, index: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
-        let leaf_index = indices::storage_leaf_index(index, self.depth);
+    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
+        let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 
         let mut authentication_nodes = indices::authentication_indices(&[leaf_index], self.depth);
@@ -150,14 +168,16 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             proof.push((*node_index, node));
         }
 
+        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(leaf_index));
+
         Ok(proof)
     }
 
-    fn insert_value(&mut self, index: usize, value: DBValue) -> Result<DBValue, TreeError> {
-        let old_value = self.get_value(index)?;
+    fn insert_value(&mut self, offset: usize, value: DBValue) -> Result<DBValue, TreeError> {
+        let old_value = self.get_value(offset)?;
         let leaf = H::hash(&value);
-        let value_index = indices::storage_value_index(index, self.depth);
-        let leaf_index = indices::storage_leaf_index(index, self.depth);
+        let value_index = indices::storage_value_index(offset, self.depth);
+        let leaf_index = indices::storage_leaf_index(offset, self.depth);
         self.storage.insert(value_index, Stored::Value(value));
         self.storage.insert(leaf_index, Stored::Hash(leaf));
         self.uncommitted.extend([value_index, leaf_index]);
@@ -187,8 +207,9 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
 
             current_index = parent_index;
             current_value = parent_hash;
-
         }
+
+        self.recorder.as_ref().map(|recorder| recorder.record(value_index));
 
         Ok(old_value)
     }
