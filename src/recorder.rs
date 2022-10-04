@@ -14,8 +14,9 @@ impl Recorder {
     }
 
     /// Drain all visited nodes.
-    pub fn drain(&mut self) -> BTreeSet<usize> {
-        std::mem::take(&mut self.nodes)
+    pub fn drain(&mut self) -> Vec<usize> {
+        let nodes = std::mem::take(&mut self.nodes);
+        nodes.into_iter().collect()
     }
 }
 

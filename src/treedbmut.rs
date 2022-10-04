@@ -87,11 +87,9 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
     }
 
     pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1
-            || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index)
-        {
+        if index < 1 || (1 << self.depth) * 3 <= index {
             return Err(TreeError::IndexOutOfBounds);
-        };
+        }
 
         match self.storage.get(&index) {
             Some(Stored::Value(value)) => return Ok(value.clone()),
@@ -140,9 +138,10 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     }
 
     fn get_value(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < offset {
+        if (1 << self.depth) <= offset {
             return Err(TreeError::IndexOutOfBounds);
         }
+
         let value_index = indices::storage_value_index(offset, self.depth);
         let result = self.get(value_index);
 
@@ -154,9 +153,10 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     }
 
     fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if 2usize.pow(self.depth as u32) < offset {
+        if (1 << self.depth) <= offset {
             return Err(TreeError::IndexOutOfBounds);
         }
+
         let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let result = self.get(leaf_index);
 
@@ -168,6 +168,10 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     }
 
     fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
+        if (1 << self.depth) <= offset {
+            return Err(TreeError::IndexOutOfBounds);
+        }
+
         let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 

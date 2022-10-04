@@ -252,7 +252,7 @@ fn test_recorder() {
     let _ = tree_db.get(3);
 
     let recorded_nodes = recorder.drain();
-    let expected_nodes = BTreeSet::from([17, 15, 13]);
+    let expected_nodes = vec![13, 15, 17];
     assert_eq!(recorded_nodes, expected_nodes);
 }
 
@@ -289,6 +289,35 @@ fn test_generate_proof_not_compact() {
         .into_iter()
         .map(|index| (index, tree_db.get(index).unwrap()))
         .collect();
+    expected.sort_by(|x, y| x.0.cmp(&y.0));
+
+    assert_eq!(proof, expected);
+}
+
+#[test]
+fn test_generate_proof_from_recorder() {
+    let mut recorder = Recorder::new();
+    let (mut memory_db, root, depth) = build_db_mock();
+    let tree_db_builder =
+        TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth).with_recorder(&mut recorder);
+    let tree_db = tree_db_builder.build();
+
+    let expected_indices = vec![22, 14, 15, 7, 6, 3, 1, 10, 11, 5, 2, 9, 8, 4];
+    let mut expected: Vec<(usize, DBValue)> = expected_indices
+        .into_iter()
+        .map(|index| (index, tree_db.get(index).unwrap()))
+        .collect();
+
+    let _ = tree_db.get_value(6);
+    let _ = tree_db.get_leaf(1);
+    let _ = tree_db.get_proof(2);
+
+    let recorded_nodes = recorder.drain();
+
+    let mut proof = generate_proof(&memory_db, &recorded_nodes, root, depth, false).unwrap();
+    proof.sort_by(|x, y| x.0.cmp(&y.0));
+
+
     expected.sort_by(|x, y| x.0.cmp(&y.0));
 
     assert_eq!(proof, expected);

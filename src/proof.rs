@@ -29,7 +29,10 @@ pub fn generate_proof<H: Hasher>(
         .cloned()
         .filter(|index| *index >= 2usize.pow(depth as u32 + 1))
         .collect();
-    let values_leaves: Vec<usize> = values.iter().map(|index| index - 2usize.pow(depth as u32)).collect();
+    let values_leaves: Vec<usize> = values
+        .iter()
+        .map(|index| index - 2usize.pow(depth as u32))
+        .collect();
     let mut leaves: Vec<usize> = indices
         .iter()
         .cloned()
@@ -43,7 +46,10 @@ pub fn generate_proof<H: Hasher>(
     let authentication_indices = authentication_indices(&leaves, compact, depth);
 
     if compact {
-        leaves = leaves.into_iter().filter(|x| !values_leaves.contains(x)).collect();
+        leaves = leaves
+            .into_iter()
+            .filter(|x| !values_leaves.contains(x))
+            .collect();
     }
 
     for &index in leaves.iter().chain(&authentication_indices) {
