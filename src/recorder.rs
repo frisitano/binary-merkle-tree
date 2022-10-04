@@ -2,12 +2,16 @@ use crate::{rstd::BTreeSet, TreeRecorder};
 
 /// Record node accesses.
 pub struct Recorder {
-    nodes: BTreeSet<usize>
+    nodes: BTreeSet<usize>,
 }
 
 impl Recorder {
     /// Create a new `Recorder`.
-    pub fn new() -> Self { Self { nodes: BTreeSet::new() } }
+    pub fn new() -> Self {
+        Self {
+            nodes: BTreeSet::new(),
+        }
+    }
 
     /// Drain all visited nodes.
     pub fn drain(&mut self) -> BTreeSet<usize> {
@@ -23,5 +27,5 @@ impl TreeRecorder for Recorder {
 
 pub enum TreeAccess {
     Value(usize),
-    Node(usize)
+    Node(usize),
 }

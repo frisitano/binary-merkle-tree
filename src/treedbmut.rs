@@ -1,19 +1,19 @@
-use hash_db::{EMPTY_PREFIX, HashDB, HashDBRef, Hasher};
-use crate::{DBValue, indices, TreeError, TreeMut, TreeRecorder, rstd::BTreeMap};
+use crate::{indices, rstd::BTreeMap, DBValue, TreeError, TreeMut, TreeRecorder};
+use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
 
 /// Stored item representation.
 pub enum Stored<H: Hasher> {
     /// Node hash.
     Hash(H::Out),
     /// Value.
-    Value(DBValue)
+    Value(DBValue),
 }
 
 pub struct TreeDBMutBuilder<'db, H: Hasher> {
     db: &'db mut dyn HashDB<H, DBValue>,
     root: &'db mut H::Out,
     depth: usize,
-    recorder: Option<&'db mut dyn TreeRecorder>
+    recorder: Option<&'db mut dyn TreeRecorder>,
 }
 
 impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
@@ -22,7 +22,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
             db,
             root,
             depth,
-            recorder: None
+            recorder: None,
         }
     }
 
@@ -31,7 +31,10 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
         self
     }
 
-    pub fn with_optional_recorder<'recorder: 'db>(mut self, recorder: Option<&'recorder mut dyn TreeRecorder>) -> Self {
+    pub fn with_optional_recorder<'recorder: 'db>(
+        mut self,
+        recorder: Option<&'recorder mut dyn TreeRecorder>,
+    ) -> Self {
         self.recorder = recorder.map(|r| r as _);
         self
     }
@@ -43,7 +46,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
             uncommitted: Vec::new(),
             root: self.root,
             depth: self.depth,
-            recorder: self.recorder.map(core::cell::RefCell::new)
+            recorder: self.recorder.map(core::cell::RefCell::new),
         }
     }
 }
@@ -60,7 +63,7 @@ pub struct TreeDBMut<'a, H: Hasher> {
     uncommitted: Vec<usize>,
     root: &'a mut H::Out,
     depth: usize,
-    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>
+    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>,
 }
 
 impl<'a, H: Hasher> TreeDBMut<'a, H> {
@@ -71,7 +74,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
             uncommitted: Vec::new(),
             root,
             depth,
-            recorder: None
+            recorder: None,
         }
     }
 
@@ -84,18 +87,22 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
     }
 
     pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1 || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index) {
-            return Err(TreeError::IndexOutOfBounds)
+        if index < 1
+            || ((2usize.pow((self.depth + 1) as u32) + 2usize.pow(self.depth as u32)) < index)
+        {
+            return Err(TreeError::IndexOutOfBounds);
         };
 
         match self.storage.get(&index) {
             Some(Stored::Value(value)) => return Ok(value.clone()),
             Some(Stored::Hash(hash)) => return Ok(hash.as_ref().to_vec()),
-            None => ()
+            None => (),
         }
 
         let db_key = H::hash(&index.to_le_bytes());
-        self.db.get(&db_key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)
+        self.db
+            .get(&db_key, EMPTY_PREFIX)
+            .ok_or(TreeError::DataNotFound)
     }
 
     pub fn commit(&mut self) {
@@ -109,7 +116,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
 
             let data = match value {
                 Stored::Value(value) => value.clone(),
-                Stored::Hash(hash) => hash.as_ref().to_vec()
+                Stored::Hash(hash) => hash.as_ref().to_vec(),
             };
             self.db.emplace(key, EMPTY_PREFIX, data);
 
@@ -134,24 +141,28 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
 
     fn get_value(&self, offset: usize) -> Result<DBValue, TreeError> {
         if 2usize.pow(self.depth as u32) < offset {
-            return Err(TreeError::IndexOutOfBounds)
+            return Err(TreeError::IndexOutOfBounds);
         }
         let value_index = indices::storage_value_index(offset, self.depth);
         let result = self.get(value_index);
 
-        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(value_index));
+        self.recorder
+            .as_ref()
+            .map(|recorder| recorder.borrow_mut().record(value_index));
 
         result
     }
 
     fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError> {
         if 2usize.pow(self.depth as u32) < offset {
-            return Err(TreeError::IndexOutOfBounds)
+            return Err(TreeError::IndexOutOfBounds);
         }
         let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let result = self.get(leaf_index);
 
-        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(leaf_index));
+        self.recorder
+            .as_ref()
+            .map(|recorder| recorder.borrow_mut().record(leaf_index));
 
         result
     }
@@ -160,7 +171,8 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
         let leaf_index = indices::storage_leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 
-        let mut authentication_nodes = indices::authentication_indices(&[leaf_index], self.depth);
+        let mut authentication_nodes =
+            indices::authentication_indices(&[leaf_index], true, self.depth);
         authentication_nodes.push(leaf_index);
 
         for node_index in authentication_nodes.iter() {
@@ -168,7 +180,9 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             proof.push((*node_index, node));
         }
 
-        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(leaf_index));
+        self.recorder
+            .as_ref()
+            .map(|recorder| recorder.borrow_mut().record(leaf_index));
 
         Ok(proof)
     }
@@ -190,13 +204,13 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             let sibling = self.get(sibling_index)?;
             let parent_index = indices::parent_index(current_index);
 
-            let concat_nodes =  if current_index % 2 == 0 {
+            let concat_nodes = if current_index % 2 == 0 {
                 let mut concat = current_value.as_mut().to_vec();
-                concat.append( &mut sibling.clone());
+                concat.append(&mut sibling.clone());
                 concat
             } else {
                 let mut concat = sibling.clone().to_vec();
-                concat.append( &mut current_value.as_ref().to_vec());
+                concat.append(&mut current_value.as_ref().to_vec());
                 concat
             };
 
@@ -209,7 +223,9 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             current_value = parent_hash;
         }
 
-        self.recorder.as_ref().map(|recorder| recorder.borrow_mut().record(value_index));
+        self.recorder
+            .as_ref()
+            .map(|recorder| recorder.borrow_mut().record(value_index));
 
         Ok(old_value)
     }

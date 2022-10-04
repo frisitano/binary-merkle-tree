@@ -2,7 +2,11 @@
 
 #[cfg(feature = "std")]
 mod rstd {
-    pub use std::{collections::{BTreeMap, BTreeSet}, mem, vec::Vec};
+    pub use std::{
+        collections::{BTreeMap, BTreeSet},
+        mem,
+        vec::Vec,
+    };
 }
 
 #[cfg(not(feature = "std"))]
@@ -12,20 +16,20 @@ mod rstd {
 }
 
 mod indices;
+mod proof;
+mod recorder;
 mod treedb;
 mod treedbmut;
-mod recorder;
-mod proof;
 
 #[cfg(test)]
 mod test;
 
-use hash_db::{EMPTY_PREFIX, HashDB, HashDBRef, Hasher};
+use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
 
+pub use proof::generate_proof;
+pub use recorder::Recorder;
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
-pub use recorder::{Recorder};
-pub use proof::generate_proof;
 
 /// Database value
 pub type DBValue = Vec<u8>;
@@ -36,7 +40,6 @@ pub enum TreeError {
     DataNotFound,
     IndexOutOfBounds,
 }
-
 
 /// An index-value datastore implemented as a database-backed binary merkle tree
 /// The tree root, internal nodes and leaves are all of type Hasher::Out.  The
@@ -63,7 +66,7 @@ pub trait Tree<H: Hasher> {
     fn root(&self) -> &H::Out;
 
     /// Return the depth of the tree.
-    fn depth (&self) -> usize;
+    fn depth(&self) -> usize;
 
     /// Get the value at the specified index.
     fn get_value(&self, offset: usize) -> Result<DBValue, TreeError>;
