@@ -15,15 +15,17 @@ mod indices;
 mod treedb;
 mod treedbmut;
 mod recorder;
+mod proof;
 
 #[cfg(test)]
 mod test;
 
-use hash_db::{EMPTY_PREFIX, HashDB, Hasher};
+use hash_db::{EMPTY_PREFIX, HashDB, HashDBRef, Hasher};
 
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
 pub use recorder::{Recorder};
+pub use proof::generate_proof;
 
 /// Database value
 pub type DBValue = Vec<u8>;

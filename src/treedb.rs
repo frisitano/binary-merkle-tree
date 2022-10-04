@@ -1,14 +1,14 @@
-use crate::{DBValue, indices, Tree, TreeError, EMPTY_PREFIX, HashDB, Hasher, TreeRecorder};
+use crate::{DBValue, indices, Tree, TreeError, EMPTY_PREFIX, HashDBRef, Hasher, TreeRecorder};
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
-    db: &'db mut dyn HashDB<H, DBValue>,
+    db: &'db dyn HashDBRef<H, DBValue>,
     root: &'db H::Out,
     depth: usize,
     recorder: Option<&'db mut dyn TreeRecorder>,
 }
 
 impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
-    pub fn new (db: &'db mut dyn HashDB<H, DBValue>, root: &'db H::Out, depth: usize) -> Self {
+    pub fn new (db: &'db dyn HashDBRef<H, DBValue>, root: &'db H::Out, depth: usize) -> Self {
         Self {
             db,
             root,
@@ -37,13 +37,13 @@ impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
     }
 }
 
-/// A `Tree` implementation using a generic `HashDB` backing database and a generic `Hasher`
+/// A `Tree` implementation using a generic `HashDBRef` backing database and a generic `Hasher`
 /// to generate keys.
 ///
 /// Use it as a `Tree` trait object.  You can use `db()` (`db_mut()`) to get the (mutable) backing
-/// `HashDB` database object.
+/// `HashDBRef` database object.
 pub struct TreeDB<'a, H: Hasher> {
-    db: &'a mut dyn HashDB<H, DBValue>,
+    db: &'a dyn HashDBRef<H, DBValue>,
     root: &'a H::Out,
     depth: usize,
     recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>,
@@ -52,12 +52,7 @@ pub struct TreeDB<'a, H: Hasher> {
 
 impl<'a, H: Hasher> TreeDB<'a, H> {
     /// Get the backing database.
-    pub fn db(&self) -> &dyn  HashDB<H, DBValue> {
-        self.db
-    }
-
-    /// Get a mutable reference to the backing database.
-    pub fn db_mut(&mut self) -> &mut dyn HashDB<H, DBValue> {
+    pub fn db(&self) -> &dyn  HashDBRef<H, DBValue> {
         self.db
     }
 

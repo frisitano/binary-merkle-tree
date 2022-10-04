@@ -1,4 +1,4 @@
-use crate::{rstd::BTreeSet, treedb::TreeDBBuilder, treedbmut::TreeDBMut, Hasher, EMPTY_PREFIX, Tree, TreeMut, DBValue, Recorder};
+use crate::{rstd::BTreeSet, treedb::TreeDBBuilder, treedbmut::TreeDBMut, Hasher, EMPTY_PREFIX, Tree, TreeMut, DBValue, Recorder, generate_proof};
 
 use std::marker::PhantomData;
 use std::slice;
@@ -224,4 +224,15 @@ fn test_storage_proof() {
     let proof = tree_db.storage_proof(&[9 ,13, 15]);
 
     println!("proof {:?}", proof);
+}
+
+#[test]
+fn test_generate_proof() {
+    let (mut memory_db, root, depth) = build_db_mock();
+    let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
+    let tree_db = tree_db_builder.build();
+
+    let proof = generate_proof(&memory_db, &[9,10, 22], root, depth).unwrap();
+
+    println!("{:?}", proof);
 }
