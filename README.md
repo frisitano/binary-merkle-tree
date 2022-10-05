@@ -27,3 +27,21 @@ from 0.
 
    0   1   2   3   <- offset
  ```
+
+## Interface
+The public traits `Tree` and `TreeMut` implemented by `TreeDB` and `TreeDBMut` respectively, require interaction with 
+leaves and values in the tree via specification of their offset in the following methods:
+
+```rust
+    /// Get the value at the specified index.
+    fn get_value(offset: usize) -> ...
+
+    /// Get the leaf hash at the specified index.
+    fn get_leaf(offset: usize) -> ...
+
+    /// Get an inclusion proof for the leaf at the specified index.
+    fn get_proof(offset: usize) -> ...
+
+    /// Insert a value at the specified index.  Returns the old value at the specified index.
+    fn insert_value(offset: usize, value: DBValue) -> ...
+```
