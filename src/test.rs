@@ -1,6 +1,6 @@
 use crate::{
-    generate_proof, indices::authentication_indices, rstd::BTreeSet, treedb::TreeDBBuilder,
-    treedbmut::TreeDBMut, DBValue, Hasher, Recorder, Tree, TreeMut, EMPTY_PREFIX,
+    generate_proof, indices::authentication_indices, treedb::TreeDBBuilder, treedbmut::TreeDBMut,
+    DBValue, Hasher, Recorder, Tree, TreeMut, EMPTY_PREFIX,
 };
 
 use std::marker::PhantomData;
@@ -316,7 +316,6 @@ fn test_generate_proof_from_recorder() {
 
     let mut proof = generate_proof(&memory_db, &recorded_nodes, root, depth, false).unwrap();
     proof.sort_by(|x, y| x.0.cmp(&y.0));
-
 
     expected.sort_by(|x, y| x.0.cmp(&y.0));
 

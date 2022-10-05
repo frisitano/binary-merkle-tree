@@ -24,7 +24,7 @@ mod treedbmut;
 #[cfg(test)]
 mod test;
 
-use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
+use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
 
 pub use proof::generate_proof;
 pub use recorder::Recorder;

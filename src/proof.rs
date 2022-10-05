@@ -1,4 +1,3 @@
-use crate::proof::ProofError::ProofGenerationFailed;
 use crate::{
     indices::authentication_indices, rstd::Vec, DBValue, HashDBRef, Hasher, TreeDBBuilder,
 };

@@ -25,8 +25,3 @@ impl TreeRecorder for Recorder {
         self.nodes.insert(node);
     }
 }
-
-pub enum TreeAccess {
-    Value(usize),
-    Node(usize),
-}
