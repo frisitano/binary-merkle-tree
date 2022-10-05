@@ -54,12 +54,12 @@ pub fn authentication_indices(indices: &[usize], compact: bool, depth: usize) ->
     authentication_indices
 }
 
-/// Determine leaf index given an offset and a depth.
-pub fn storage_leaf_index(offset: usize, depth: usize) -> usize {
-    2usize.pow(depth as u32) + offset
+/// Determine leaf index given an offset and a tree depth.
+pub fn leaf_index(offset: usize, depth: usize) -> usize {
+    (1 << depth) + offset
 }
 
-/// Determine value index given an offset and a depth.
-pub fn storage_value_index(offset: usize, depth: usize) -> usize {
-    2usize.pow((depth + 1) as u32) + offset
+/// Determine value index given an offset and a tree depth.
+pub fn value_index(offset: usize, depth: usize) -> usize {
+    (1 << (depth + 1)) + offset
 }

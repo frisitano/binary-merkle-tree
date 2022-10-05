@@ -142,7 +142,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let value_index = indices::storage_value_index(offset, self.depth);
+        let value_index = indices::value_index(offset, self.depth);
         let result = self.get(value_index);
 
         self.recorder
@@ -157,7 +157,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let leaf_index = indices::leaf_index(offset, self.depth);
         let result = self.get(leaf_index);
 
         self.recorder
@@ -172,7 +172,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let leaf_index = indices::leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 
         let mut authentication_nodes =
@@ -194,8 +194,8 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     fn insert_value(&mut self, offset: usize, value: DBValue) -> Result<DBValue, TreeError> {
         let old_value = self.get_value(offset)?;
         let leaf = H::hash(&value);
-        let value_index = indices::storage_value_index(offset, self.depth);
-        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let value_index = indices::value_index(offset, self.depth);
+        let leaf_index = indices::leaf_index(offset, self.depth);
         self.storage.insert(value_index, Stored::Value(value));
         self.storage.insert(leaf_index, Stored::Hash(leaf));
         self.uncommitted.extend([value_index, leaf_index]);
@@ -208,7 +208,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             let sibling = self.get(sibling_index)?;
             let parent_index = indices::parent_index(current_index);
 
-            let concat_nodes = if current_index % 2 == 0 {
+            let concat_nodes = if indices::is_left_index(current_index) {
                 let mut concat = current_value.as_mut().to_vec();
                 concat.append(&mut sibling.clone());
                 concat

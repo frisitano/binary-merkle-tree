@@ -5,10 +5,9 @@ a generic `Hasher`.  The implementation is compatible with `no_std` targets by d
 feature (default). 
 
 ## Overview
-An index-value datastore implemented as a database-backed binary merkle tree
-The tree root, internal nodes and leaves are all of type `Hasher::Out`.  
-The  values are of type `Vec<u8>` (`DBvalue`).  Tree nodes and values are
-indexed using the following standard:
+An index-value datastore implemented as a database-backed binary merkle tree. The tree root, internal nodes 
+and leaves are all of type `Hasher::Out`. The values are of type `Vec<u8>` (`DBvalue`).  Tree nodes and values 
+are indexed using the following standard:
 ```
 index = 2^(layer) + offset
 ```
@@ -28,6 +27,3 @@ from 0.
 
    0   1   2   3   <- offset
  ```
-
-
-

@@ -90,7 +90,7 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let value_index = indices::storage_value_index(offset, self.depth);
+        let value_index = indices::value_index(offset, self.depth);
         let result = self.get(value_index);
 
         self.recorder
@@ -105,7 +105,7 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let leaf_index = indices::leaf_index(offset, self.depth);
         let result = self.get(leaf_index);
 
         self.recorder
@@ -120,7 +120,7 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::storage_leaf_index(offset, self.depth);
+        let leaf_index = indices::leaf_index(offset, self.depth);
         let mut proof = Vec::new();
 
         let mut authentication_nodes =
