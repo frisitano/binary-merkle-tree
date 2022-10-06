@@ -20,6 +20,7 @@ mod proof;
 mod recorder;
 mod treedb;
 mod treedbmut;
+mod node;
 
 #[cfg(test)]
 mod test;

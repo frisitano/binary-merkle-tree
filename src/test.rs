@@ -9,6 +9,10 @@ use std::slice;
 use hash256_std_hasher::Hash256StdHasher;
 use hash_db::{AsHashDB, Prefix};
 use memory_db::{KeyFunction, MemoryDB};
+use serde::Serialize;
+
+use crate::node::Node;
+use crate::node::Node::Node;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct Sha3;
@@ -101,6 +105,12 @@ fn build_db_mock() -> (MemoryDB<Sha3, NoopKey<Sha3>, Vec<u8>>, [u8; 32], usize) 
     }
 
     (memory_db, root, depth)
+}
+
+#[test]
+fn test_node_serialise() {
+    let node = Node::Inner(Vec::new(), Vec::new());
+    let serialized = node.serialize();
 }
 
 #[test]
