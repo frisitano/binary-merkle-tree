@@ -15,31 +15,55 @@ mod rstd {
     pub use core::mem;
 }
 
-mod indices;
-mod proof;
-mod recorder;
-mod treedb;
-mod treedbmut;
-mod node;
+// mod indices;
+// mod proof;
+// mod recorder;
+// mod treedb;
+// mod treedbmut;
 
 #[cfg(test)]
 mod test;
 
-use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
+use hash_db::{EMPTY_PREFIX, HashDBRef, Hasher};
+use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 
-pub use proof::generate_proof;
-pub use recorder::Recorder;
-pub use treedb::{TreeDB, TreeDBBuilder};
-pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
+// pub use proof::generate_proof;
+// pub use recorder::Recorder;
+// pub use treedb::{TreeDB, TreeDBBuilder};
+// pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
 
 /// Database value
 pub type DBValue = Vec<u8>;
+
+/// Node Enumb
+/// Variants include: Value, Leaf, Inner
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Node{
+    Value(DBValue),
+    Leaf(Vec<u8>),
+    Inner(Vec<u8>, Vec<u8>),
+}
+
+pub fn hash_node<H: Hasher>(node: &Node) -> Vec<u8> {
+    match node {
+        Node::Inner(left, right) => {
+            let mut combined = Vec::new();
+            combined.extend_from_slice(&left);
+            combined.extend_from_slice(&right);
+            H::hash(&combined).as_ref().to_vec()
+        }
+        Node::Value(value) => H::hash(&value).as_ref().to_vec(),
+        Node::Leaf(value) => value.clone(),
+    }
+}
 
 /// Tree Errors
 #[derive(Clone, Debug)]
 pub enum TreeError {
     DataNotFound,
     IndexOutOfBounds,
+    UnexpectedNodeType,
 }
 
 /// An index-value datastore implemented as a database-backed binary merkle tree
@@ -70,13 +94,13 @@ pub trait Tree<H: Hasher> {
     fn depth(&self) -> usize;
 
     /// Get the value at the specified index.
-    fn get_value(&self, offset: usize) -> Result<DBValue, TreeError>;
+    fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get the leaf at the specified index.
-    fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError>;
+    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get an inclusion proof for the leaf at the specified index.
-    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError>;
+    fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError>;
 }
 
 /// An index-value datastore implemented as a database-backed binary merkle tree
@@ -88,23 +112,23 @@ pub trait TreeMut<H: Hasher> {
     fn depth(&self) -> usize;
 
     /// Get the value at the specified index.
-    fn get_value(&self, offset: usize) -> Result<DBValue, TreeError>;
+    fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get the leaf hash at the specified index.
-    fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError>;
+    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get an inclusion proof for the leaf at the specified index.
-    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError>;
+    fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError>;
 
     /// Insert a value at the specified index.  Returns the old value at the specified index.
-    fn insert_value(&mut self, offset: usize, value: DBValue) -> Result<DBValue, TreeError>;
+    fn insert_value(&mut self, key: &[u8], value: DBValue) -> Result<DBValue, TreeError>;
 }
 
-/// A tree recorder that can be used to record tree accesses.
-///
-/// The `TreeRecorder is used to construct a proof that attests to the inclusion of accessed
-/// nodes in a tree.
-pub trait TreeRecorder {
-    /// Record access of the the given node index.
-    fn record(&mut self, index: usize);
-}
+// A tree recorder that can be used to record tree accesses.
+//
+// The `TreeRecorder is used to construct a proof that attests to the inclusion of accessed
+// nodes in a tree.
+// pub trait TreeRecorder {
+//     /// Record access of the the given node index.
+//     fn record(&mut self, key: &[u8]);
+// }

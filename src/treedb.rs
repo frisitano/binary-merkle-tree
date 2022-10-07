@@ -1,4 +1,4 @@
-use crate::{indices, DBValue, HashDBRef, Hasher, Tree, TreeError, TreeRecorder, EMPTY_PREFIX};
+use crate::{indices, DBValue, HashDBRef, Hasher, Tree, TreeError, TreeRecorder, EMPTY_PREFIX, Node};
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
     db: &'db dyn HashDBRef<H, DBValue>,
@@ -61,81 +61,94 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         self.db
     }
 
-    pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1 || (1 << self.depth) * 3 <= index {
-            return Err(TreeError::IndexOutOfBounds);
+    pub fn get(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+        // if index < 1 || (1 << self.depth) * 3 <= index {
+        //     return Err(TreeError::IndexOutOfBounds);
+        // }
+        let root_data = self.db.get(self.root).ok_or(TreeError::DataNotFound)?;
+        let mut current_node: Node;
+        current_node = bincode::deserialize(&root_data).unwrap();
+
+        for &bit in key {
+            if let Node::Inner(left, right) = current_node {
+                let key = if bit == 0 { left } else { right };
+                let data = self.db.get(&left).ok_or(TreeError::DataNotFound)?;
+                current_node = bincode::deserialize(&data).unwrap();
+            } else {
+                return Err(TreeError::UnexpectedNodeType)
+            }
         }
 
-        let key = H::hash(&index.to_le_bytes());
-        let result = self
-            .db
-            .get(&key, EMPTY_PREFIX)
-            .ok_or(TreeError::DataNotFound);
-
-        result
+        match current_node {
+            Node::Leaf(value) => Ok(value),
+            Node::Value(value) => Ok(value),
+            Node::Inner(_,_) => Err(TreeError::UnexpectedNodeType)
+        }
     }
 }
 
-impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
-    fn root(&self) -> &H::Out {
-        self.root
-    }
-
-    fn depth(&self) -> usize {
-        self.depth
-    }
-
-    fn get_value(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if (1 << self.depth) <= offset {
-            return Err(TreeError::IndexOutOfBounds);
-        }
-
-        let value_index = indices::value_index(offset, self.depth);
-        let result = self.get(value_index);
-
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(value_index));
-
-        result
-    }
-
-    fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if (1 << self.depth) <= offset {
-            return Err(TreeError::IndexOutOfBounds);
-        }
-
-        let leaf_index = indices::leaf_index(offset, self.depth);
-        let result = self.get(leaf_index);
-
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(leaf_index));
-
-        result
-    }
-
-    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
-        if (1 << self.depth) <= offset {
-            return Err(TreeError::IndexOutOfBounds);
-        }
-
-        let leaf_index = indices::leaf_index(offset, self.depth);
-        let mut proof = Vec::new();
-
-        let mut authentication_nodes =
-            indices::authentication_indices(&[leaf_index], true, self.depth);
-        authentication_nodes.push(leaf_index);
-
-        for node_index in authentication_nodes.iter() {
-            let node = self.get(*node_index)?;
-            proof.push((*node_index, node));
-        }
-
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(leaf_index));
-
-        Ok(proof)
-    }
-}
+// impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
+//     fn root(&self) -> &H::Out {
+//         self.root
+//     }
+//
+//     fn depth(&self) -> usize {
+//         self.depth
+//     }
+//
+//     fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+//         // if (1 << self.depth) <= offset {
+//         //     return Err(TreeError::IndexOutOfBounds);
+//         // }
+//
+//         // let value_index = indices::value_index(offset, self.depth);
+//         let result = self.get(value_index);
+//
+//         self.recorder
+//             .as_ref()
+//             .map(|r| r.borrow_mut().record(value_index));
+//
+//         result
+//     }
+//
+//     fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+//         if (1 << self.depth) <= offset {
+//             return Err(TreeError::IndexOutOfBounds);
+//         }
+//
+//
+//
+//         let leaf_index = indices::leaf_index(offset, self.depth);
+//         let result = self.get(leaf_index);
+//
+//         self.recorder
+//             .as_ref()
+//             .map(|r| r.borrow_mut().record(leaf_index));
+//
+//         result
+//     }
+//
+//     fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError> {
+//         // if (1 << self.depth) <= offset {
+//         //     return Err(TreeError::IndexOutOfBounds);
+//         // }
+//
+//         // let leaf_index = indices::leaf_index(offset, self.depth);
+//         let mut proof = Vec::new();
+//
+//         let mut authentication_nodes =
+//             indices::authentication_indices(&[leaf_index], true, self.depth);
+//         authentication_nodes.push(leaf_index);
+//
+//         for node_index in authentication_nodes.iter() {
+//             let node = self.get(*node_index)?;
+//             proof.push((*node_index, node));
+//         }
+//
+//         self.recorder
+//             .as_ref()
+//             .map(|r| r.borrow_mut().record(leaf_index));
+//
+//         Ok(proof)
+//     }
+// }
