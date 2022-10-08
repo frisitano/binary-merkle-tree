@@ -15,10 +15,10 @@ mod rstd {
     pub use core::mem;
 }
 
-// mod indices;
+mod indices;
 // mod proof;
 // mod recorder;
-// mod treedb;
+mod treedb;
 // mod treedbmut;
 
 #[cfg(test)]
@@ -30,7 +30,7 @@ use std::marker::PhantomData;
 
 // pub use proof::generate_proof;
 // pub use recorder::Recorder;
-// pub use treedb::{TreeDB, TreeDBBuilder};
+pub use treedb::{TreeDB, TreeDBBuilder};
 // pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
 
 /// Database value
@@ -39,23 +39,39 @@ pub type DBValue = Vec<u8>;
 /// Node Enumb
 /// Variants include: Value, Leaf, Inner
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum Node{
+pub enum Node {
     Value(DBValue),
-    Leaf(Vec<u8>),
     Inner(Vec<u8>, Vec<u8>),
 }
 
-pub fn hash_node<H: Hasher>(node: &Node) -> Vec<u8> {
-    match node {
-        Node::Inner(left, right) => {
-            let mut combined = Vec::new();
-            combined.extend_from_slice(&left);
-            combined.extend_from_slice(&right);
-            H::hash(&combined).as_ref().to_vec()
+impl Node {
+    pub fn hash<H: Hasher>(&self) -> H::Out {
+        match self {
+            Node::Inner(left, right) => {
+                let mut combined = Vec::with_capacity(H::LENGTH * 2);
+                combined.extend_from_slice(left);
+                combined.extend_from_slice(right);
+                H::hash(&combined)
+            },
+            Node::Value(value) => H::hash(&value),
         }
-        Node::Value(value) => H::hash(&value).as_ref().to_vec(),
-        Node::Leaf(value) => value.clone(),
     }
+
+    pub fn get_inner_node_data(&self, node: u8) -> Result<Vec<u8>, TreeError> {
+        match self {
+            Node::Value(_) => Err(TreeError::UnexpectedNodeType),
+            Node::Inner(left, right) => if node == 0 { Ok(left.clone()) } else { Ok(right.clone()) }
+        }
+    }
+}
+
+pub fn decode_hash<H: Hasher>(data: &[u8]) -> Option<H::Out> {
+	if data.len() != H::LENGTH {
+		return None
+	}
+	let mut hash = H::Out::default();
+	hash.as_mut().copy_from_slice(data);
+	Some(hash)
 }
 
 /// Tree Errors
@@ -124,11 +140,11 @@ pub trait TreeMut<H: Hasher> {
     fn insert_value(&mut self, key: &[u8], value: DBValue) -> Result<DBValue, TreeError>;
 }
 
-// A tree recorder that can be used to record tree accesses.
-//
-// The `TreeRecorder is used to construct a proof that attests to the inclusion of accessed
-// nodes in a tree.
-// pub trait TreeRecorder {
-//     /// Record access of the the given node index.
-//     fn record(&mut self, key: &[u8]);
-// }
+/// A tree recorder that can be used to record tree accesses.
+///
+/// The `TreeRecorder is used to construct a proof that attests to the inclusion of accessed
+/// nodes in a tree.
+pub trait TreeRecorder {
+    /// Record access of the the given node index.
+    fn record(&mut self, key: &[u8]);
+}

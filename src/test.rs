@@ -1,6 +1,6 @@
 // use crate::{generate_proof, indices::authentication_indices, treedb::TreeDBBuilder, treedbmut::TreeDBMut, DBValue, Hasher, Recorder, Tree, TreeMut, EMPTY_PREFIX, hash_node};
-use crate::EMPTY_PREFIX;
-use crate::{Hasher, Node, hash_node};
+use crate::{indices::authentication_indices, EMPTY_PREFIX, treedb::{TreeDBBuilder, TreeDB}, Tree};
+use crate::{Hasher, Node, DBValue};
 use std::marker::PhantomData;
 use std::slice;
 
@@ -16,7 +16,7 @@ use winterfell::math::fields::f128;
 pub struct Sha3;
 
 impl Hasher for Sha3 {
-    type Out = Vec<u8>;
+    type Out = [u8; 32];
 
     type StdHasher = Hash256StdHasher;
 
@@ -28,17 +28,15 @@ impl Hasher for Sha3 {
     }
 }
 
-// pub struct NoopKey<H: Hasher>(PhantomData<H>);
-//
-// impl<H: Hasher> KeyFunction<H> for NoopKey<H> {
-//     type Key = Vec<u8>;
-//
-//     fn key(hash: &H::Out, _prefix: Prefix) -> Vec<u8> {
-//         let mut out = Vec::new();
-//         out.extend_from_slice(hash.as_ref());
-//         out
-//     }
-// }
+pub struct NoopKey<H: Hasher>(PhantomData<H>);
+
+impl<H: Hasher> KeyFunction<H> for NoopKey<H> {
+    type Key = Vec<u8>;
+
+    fn key(hash: &H::Out, _prefix: Prefix) -> Vec<u8> {
+        hash.as_ref().to_vec()
+    }
+}
 
 fn test_values() -> Vec<u32> {
     let values: Vec<u32> = vec![5, 10, 13, 3, 14, 100, 23, 100];
@@ -49,22 +47,18 @@ fn build_data() -> (
     Vec<Node>,
     Vec<Node>,
     usize,
-    Vec<u8>,
+    <Sha3 as Hasher>::Out,
 ) {
     let depth = 3usize;
     let values: Vec<u32> = test_values();
     let values: Vec<Node> = values.into_iter().map(|x| Node::Value(x.to_le_bytes().to_vec())).collect();
-    let leaves: Vec<Node> = values
-        .iter()
-        .map(|node| Node::Leaf(hash_node::<Sha3>(&node).to_vec()))
-        .collect();
 
-    let n = leaves.len();
+    let n = values.len();
     let mut nodes: Vec<Node> = Vec::with_capacity(2 * n);
     unsafe { nodes.set_len(2 * n) }
 
     nodes[0] = Node::Value(Vec::new());
-    nodes[n..].clone_from_slice(&leaves);
+    nodes[n..].clone_from_slice(&values);
 
     let leaf_pairs =
         unsafe { slice::from_raw_parts(nodes.as_ptr() as *const [Node; 2], n) };
@@ -72,112 +66,133 @@ fn build_data() -> (
     for i in (1..n).rev() {
         let left = &leaf_pairs[i][0];
         let right = &leaf_pairs[i][1];
-        nodes[i] = Node::Inner(hash_node::<Sha3>(left), hash_node::<Sha3>(right));
+        nodes[i] = Node::Inner(left.hash::<Sha3>().as_ref().to_vec(), right.hash::<Sha3>().as_ref().to_vec());
     }
 
-    let root = hash_node::<Sha3>(&nodes[1]);
+    let root = nodes[1].hash::<Sha3>();
 
     (values, nodes, depth, root)
 }
 
 
-fn build_db_mock() -> (MemoryDB<Sha3, HashKey<Sha3>, Vec<u8>>, [u8; 32], usize) {
+fn build_db_mock() -> (MemoryDB<Sha3, NoopKey<Sha3>, Vec<u8>>, <Sha3 as Hasher>::Out, usize) {
     let (values, nodes, depth, root) = build_data();
-    let mut memory_db = MemoryDB::<Sha3, HashKey<Sha3>, Vec<u8>>::default();
+    let mut memory_db = MemoryDB::<Sha3, NoopKey<Sha3>, Vec<u8>>::default();
 
     for node in values.iter() {
-        let key = hash_node::<Sha3>(&node);
         memory_db
             .as_hash_db_mut()
-            .emplace(key, EMPTY_PREFIX, node.serialize());
+            .emplace(node.hash::<Sha3>(), EMPTY_PREFIX, bincode::serialize(node).unwrap());
     }
 
-    for node_index in 1..nodes.len() {
-        let node_index_bytes = node_index.to_le_bytes();
-        let key = Sha3::hash(&node_index_bytes);
+    for index in 1..nodes.len() {
         memory_db
             .as_hash_db_mut()
-            .emplace(key, EMPTY_PREFIX, nodes[node_index].to_vec());
+            .emplace(nodes[index].hash::<Sha3>(), EMPTY_PREFIX, bincode::serialize(&nodes[index]).unwrap());
     }
 
     (memory_db, root, depth)
 }
 
-// #[test]
-// fn authentication_indices_test() {
-//     assert_eq!(authentication_indices(&[9, 11], true, 3), [8, 10, 3]);
-//     assert_eq!(authentication_indices(&[10, 15], true, 3), [11, 14, 4, 6]);
-//     assert_eq!(
-//         authentication_indices(&[9, 11], false, 3),
-//         [8, 10, 4, 5, 2, 3, 1]
-//     );
-// }
-//
-// #[test]
-// fn test_get_value() {
-//     let (mut memory_db, mut root, depth) = build_db_mock();
-//     let test_values = test_values();
-//
-//     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
-//     let tree_db = tree_db_builder.build();
-//     for (i, value) in test_values.iter().enumerate() {
-//         assert_eq!(
-//             u32::from_le_bytes(tree_db.get_value(i).unwrap().try_into().unwrap()),
-//             *value
-//         )
-//     }
-//
-//     let tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
-//     for (i, value) in test_values.iter().enumerate() {
-//         assert_eq!(
-//             u32::from_le_bytes(tree_db_mut.get_value(i).unwrap().try_into().unwrap()),
-//             *value
-//         )
-//     }
-// }
-//
-// #[test]
-// fn test_get_leaf() {
-//     let (mut memory_db, mut root, depth) = build_db_mock();
-//     let test_values = test_values();
-//
-//     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
-//     let tree_db = tree_db_builder.build();
-//     for (i, value) in test_values.iter().enumerate() {
-//         let leaf = Sha3::hash(&value.to_le_bytes());
-//         assert_eq!(tree_db.get_leaf(i).unwrap(), leaf)
-//     }
-//
-//     let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
-//     for (i, value) in test_values.iter().enumerate() {
-//         let leaf = Sha3::hash(&value.to_le_bytes());
-//         assert_eq!(tree_db_mut.get_leaf(i).unwrap(), leaf)
-//     }
-// }
-//
-// #[test]
-// fn test_get_proof() {
-//     let (mut memory_db, mut root, depth) = build_db_mock();
-//
-//     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
-//     let tree_db = tree_db_builder.build();
-//
-//     let expected: Vec<(usize, DBValue)> = vec![
-//         (11, tree_db.get(11).unwrap()),
-//         (10, tree_db.get(10).unwrap()),
-//         (4, tree_db.get(4).unwrap()),
-//         (3, tree_db.get(3).unwrap()),
-//     ];
-//
-//     let mut proof = tree_db.get_proof(2).unwrap();
-//     proof.sort_by(|a, b| b.0.cmp(&a.0));
-//     assert_eq!(proof, expected);
-//
-//     let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
-//     let mut proof = tree_db_mut.get_proof(2).unwrap();
-//     proof.sort_by(|a, b| b.0.cmp(&a.0));
-//     assert_eq!(proof, expected);
-// }
+#[test]
+fn authentication_indices_test() {
+    assert_eq!(authentication_indices(&[9, 11], true, 3), [8, 10, 3]);
+    assert_eq!(authentication_indices(&[10, 15], true, 3), [11, 14, 4, 6]);
+    assert_eq!(
+        authentication_indices(&[9, 11], false, 3),
+        [8, 10, 4, 5, 2, 3, 1]
+    );
+}
+
+#[test]
+fn test_get_value() {
+    let (mut memory_db, mut root, depth) = build_db_mock();
+    let test_values = test_values();
+
+    let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
+    let tree_db = tree_db_builder.build();
+    let keys: Vec<Vec<u8>> = Vec::from([
+        Vec::from([0, 0, 0]),
+        Vec::from([0, 0, 1]),
+        Vec::from([0, 1, 0]),
+        Vec::from([0, 1, 1]),
+        Vec::from([1, 0, 0]),
+        Vec::from([1, 0, 1]),
+        Vec::from([1, 1, 0]),
+        Vec::from([1, 1, 1])
+    ]);
+    for (value, key) in test_values.iter().zip(keys) {
+        assert_eq!(
+            u32::from_le_bytes(tree_db.get_value(&key).unwrap().try_into().unwrap()),
+            *value
+        )
+    }
+
+    // let tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
+    // for (i, value) in test_values.iter().enumerate() {
+    //     assert_eq!(
+    //         u32::from_le_bytes(tree_db_mut.get_value(i).unwrap().try_into().unwrap()),
+    //         *value
+    //     )
+    // }
+}
+
+#[test]
+fn test_get_leaf() {
+    let (mut memory_db, mut root, depth) = build_db_mock();
+    let test_values = test_values();
+
+    let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
+    let tree_db = tree_db_builder.build();
+
+    let keys: Vec<Vec<u8>> = Vec::from([
+        Vec::from([0, 0, 0]),
+        Vec::from([0 ,0, 1]),
+        Vec::from([0, 1, 0]),
+        Vec::from([0, 1, 1]),
+        Vec::from([1, 0, 0]),
+        Vec::from([1, 0, 1]),
+        Vec::from([1, 1, 0]),
+        Vec::from([1, 1, 1])
+    ]);
+    for (value, key) in test_values.iter().zip(keys) {
+        let leaf = Sha3::hash(&value.to_le_bytes());
+        assert_eq!(tree_db.get_leaf(&key).unwrap(), leaf)
+    }
+
+    // let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    // for (i, value) in test_values.iter().enumerate() {
+    //     let leaf = Sha3::hash(&value.to_le_bytes());
+    //     assert_eq!(tree_db_mut.get_leaf(i).unwrap(), leaf)
+    // }
+}
+
+#[test]
+fn test_get_proof() {
+    let (mut memory_db, root, depth) = build_db_mock();
+
+    let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
+    let tree_db = tree_db_builder.build();
+    let key = [0, 1, 1];
+
+    let mut expected: Vec<(usize, DBValue)> = Vec::new();
+    expected.push((1, tree_db.root().as_ref().to_vec()));
+    expected.push((2, tree_db.get(&[]).unwrap().get_inner_node_data(0).unwrap()));
+    expected.push((3, tree_db.get(&[]).unwrap().get_inner_node_data(1).unwrap()));
+    expected.push((4, tree_db.get(&[0]).unwrap().get_inner_node_data(0).unwrap()));
+    expected.push((5, tree_db.get(&[0]).unwrap().get_inner_node_data(1).unwrap()));
+    expected.push((10, tree_db.get(&[0, 1]).unwrap().get_inner_node_data(0).unwrap()));
+    expected.push((11, tree_db.get(&[0, 1]).unwrap().get_inner_node_data(1).unwrap()));
+
+    let mut proof = tree_db.get_proof(&key).unwrap();
+    proof.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(proof, expected);
+
+    // let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    // let mut proof = tree_db_mut.get_proof(2).unwrap();
+    // proof.sort_by(|a, b| b.0.cmp(&a.0));
+    // assert_eq!(proof, expected);
+}
 //
 // #[test]
 // fn test_insert_tree_db_mut() {
