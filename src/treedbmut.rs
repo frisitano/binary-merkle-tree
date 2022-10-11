@@ -1,12 +1,25 @@
-use crate::{indices, rstd::BTreeMap, DBValue, TreeError, TreeMut, TreeRecorder};
+use std::{collections::HashMap, thread::current};
+
+use crate::{
+    decode_hash, indices, rstd::BTreeMap, DBValue, EncodedNode, TreeError, TreeMut, TreeRecorder,
+};
 use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
 
 /// Stored item representation.
-pub enum Stored<H: Hasher> {
+pub enum Stored {
     /// Node hash.
-    Hash(H::Out),
+    New(EncodedNode),
     /// Value.
-    Value(DBValue),
+    Cached(EncodedNode),
+}
+
+impl Stored {
+    pub fn get_node(&self) -> &EncodedNode {
+        match self {
+            Stored::New(node) => node,
+            Stored::Cached(node) => node,
+        }
+    }
 }
 
 pub struct TreeDBMutBuilder<'db, H: Hasher> {
@@ -42,8 +55,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
     pub fn build(self) -> TreeDBMut<'db, H> {
         TreeDBMut {
             db: self.db,
-            storage: BTreeMap::new(),
-            uncommitted: Vec::new(),
+            storage: HashMap::new(),
             root: self.root,
             depth: self.depth,
             recorder: self.recorder.map(core::cell::RefCell::new),
@@ -59,8 +71,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
 /// Querying the root or dropping the `TreeDBMut` will `commit()` stored changes.
 pub struct TreeDBMut<'a, H: Hasher> {
     db: &'a mut dyn HashDB<H, DBValue>,
-    storage: BTreeMap<usize, Stored<H>>,
-    uncommitted: Vec<usize>,
+    storage: HashMap<H::Out, Stored>,
     root: &'a mut H::Out,
     depth: usize,
     recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>,
@@ -70,8 +81,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
     pub fn new(db: &'a mut dyn HashDB<H, DBValue>, root: &'a mut H::Out, depth: usize) -> Self {
         Self {
             db,
-            storage: BTreeMap::new(),
-            uncommitted: Vec::new(),
+            storage: HashMap::new(),
             root,
             depth,
             recorder: None,
@@ -86,50 +96,87 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         self.db
     }
 
-    pub fn get(&self, index: usize) -> Result<DBValue, TreeError> {
-        if index < 1 || (1 << self.depth) * 3 <= index {
-            return Err(TreeError::IndexOutOfBounds);
+    pub fn lookup(&self, key: &H::Out) -> Result<EncodedNode, TreeError> {
+        if let Some(value) = self.storage.get(key) {
+            return Ok(value.get_node().clone());
         }
 
-        match self.storage.get(&index) {
-            Some(Stored::Value(value)) => return Ok(value.clone()),
-            Some(Stored::Hash(hash)) => return Ok(hash.as_ref().to_vec()),
-            None => (),
-        }
+        let data = self
+            .db
+            .get(key, EMPTY_PREFIX)
+            .ok_or(TreeError::DataNotFound)?;
+        let node: EncodedNode = bincode::deserialize(&data).unwrap();
 
-        let db_key = H::hash(&index.to_le_bytes());
-        self.db
-            .get(&db_key, EMPTY_PREFIX)
-            .ok_or(TreeError::DataNotFound)
+        Ok(node)
     }
 
-    pub fn commit(&mut self) {
-        for node in self.uncommitted.drain(..) {
-            let value = &self.storage[&node];
-            let key = H::hash(&node.to_le_bytes());
+    pub fn get(&self, key: &[u8]) -> Result<EncodedNode, TreeError> {
+        // if index < 1 || (1 << self.depth) * 3 <= index {
+        //     return Err(TreeError::IndexOutOfBounds);
+        // }
+        let mut current_node = self.lookup(self.root)?;
 
-            if self.db.contains(&key, EMPTY_PREFIX) {
-                self.db.remove(&key, EMPTY_PREFIX);
-            }
+        for &bit in key {
+            let key = current_node.get_inner_node_hash::<H>(bit)?;
+            current_node = self.lookup(&key)?;
+        }
 
-            let data = match value {
-                Stored::Value(value) => value.clone(),
-                Stored::Hash(hash) => hash.as_ref().to_vec(),
-            };
-            self.db.emplace(key, EMPTY_PREFIX, data);
+        Ok(current_node)
+    }
 
-            if node == 1 {
-                if let Stored::Hash(root) = value {
-                    *self.root = root.clone();
-                }
-            }
+    fn insert_at(
+        &mut self,
+        current_node: &mut EncodedNode,
+        key: &[u8],
+        value: DBValue,
+    ) -> Result<EncodedNode, TreeError> {
+        if key.len() == 1 {
+            let old_leaf = current_node.get_inner_node_hash::<H>(key[0])?;
+            let old_value = self.lookup(&old_leaf)?;
+            let new_node = EncodedNode::Value(value);
+            let new_leaf = new_node.hash::<H>();
+            current_node.set_inner_node_data(key[0], new_leaf.as_ref().to_vec())?;
+            self.storage.insert(new_leaf, Stored::New(new_node));
+            Ok(old_value)
+        } else {
+            let child_key = current_node.get_inner_node_hash::<H>(key[0])?;
+            // TODO should lookup storage first
+            let mut child_node = self.lookup(&child_key)?;
+            let old_value = self.insert_at(&mut child_node, &key[1..], value)?;
+            let child_hash = child_node.hash::<H>();
+            current_node.set_inner_node_data(key[0], child_hash.as_ref().to_vec())?;
+            self.storage.insert(child_hash, Stored::New(child_node));
+            Ok(old_value)
         }
     }
+
+    // pub fn commit(&mut self) {
+    //     for node in self.uncommitted.drain(..) {
+    //         let value = &self.storage[&node];
+    //         let key = H::hash(&node.to_le_bytes());
+
+    //         if self.db.contains(&key, EMPTY_PREFIX) {
+    //             self.db.remove(&key, EMPTY_PREFIX);
+    //         }
+
+    //         let data = match value {
+    //             Stored::Value(value) => value.clone(),
+    //             Stored::Hash(hash) => hash.as_ref().to_vec(),
+    //         };
+    //         self.db.emplace(key, EMPTY_PREFIX, data);
+
+    //         if node == 1 {
+    //             if let Stored::Hash(root) = value {
+    //                 *self.root = root.clone();
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     fn root(&mut self) -> &H::Out {
-        self.commit();
+        // self.commit();
         self.root
     }
 
@@ -137,100 +184,93 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
         self.depth
     }
 
-    fn get_value(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if (1 << self.depth) <= offset {
+    fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+        if key.len() != self.depth {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let value_index = indices::value_index(offset, self.depth);
-        let result = self.get(value_index);
+        let data = self.get(key).map(|node| node.get_value())?;
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
-        self.recorder
-            .as_ref()
-            .map(|recorder| recorder.borrow_mut().record(value_index));
-
-        result
+        data
     }
 
-    fn get_leaf(&self, offset: usize) -> Result<DBValue, TreeError> {
-        if (1 << self.depth) <= offset {
+    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+        if key.len() != self.depth {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::leaf_index(offset, self.depth);
-        let result = self.get(leaf_index);
+        let data = self
+            .get(&key[..key.len() - 1])
+            .map(|node| node.get_inner_node_value(key[key.len() - 1]))?;
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
-        self.recorder
-            .as_ref()
-            .map(|recorder| recorder.borrow_mut().record(leaf_index));
-
-        result
+        data
     }
 
-    fn get_proof(&self, offset: usize) -> Result<Vec<(usize, DBValue)>, TreeError> {
-        if (1 << self.depth) <= offset {
+    fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError> {
+        if key.len() != self.depth {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let leaf_index = indices::leaf_index(offset, self.depth);
         let mut proof = Vec::new();
+        proof.push((1, self.root.as_ref().to_vec()));
 
-        let mut authentication_nodes =
-            indices::authentication_indices(&[leaf_index], true, self.depth);
-        authentication_nodes.push(leaf_index);
+        let root_data = self
+            .db
+            .get(self.root, EMPTY_PREFIX)
+            .ok_or(TreeError::DataNotFound)?;
 
-        for node_index in authentication_nodes.iter() {
-            let node = self.get(*node_index)?;
-            proof.push((*node_index, node));
+        let mut current_node: EncodedNode;
+        current_node = bincode::deserialize(&root_data).unwrap();
+
+        for (i, &bit) in key.iter().enumerate() {
+            let index = indices::compute_index(&key[..i + 1]);
+            let left_index = if index % 2 == 0 { index } else { index ^ 1 };
+
+            if let EncodedNode::Inner(left, right) = current_node {
+                let hash_left = decode_hash::<H>(&left).unwrap();
+                let hash_right = decode_hash::<H>(&right).unwrap();
+                let key = if bit == 0 { hash_left } else { hash_right };
+                let data = self
+                    .db
+                    .get(&key, EMPTY_PREFIX)
+                    .ok_or(TreeError::DataNotFound)?;
+                current_node = bincode::deserialize(&data).unwrap();
+
+                proof.extend_from_slice(&[
+                    (left_index, hash_left.as_ref().to_vec()),
+                    (left_index + 1, hash_right.as_ref().to_vec()),
+                ]);
+            } else {
+                return Err(TreeError::UnexpectedNodeType);
+            }
         }
 
-        self.recorder
-            .as_ref()
-            .map(|recorder| recorder.borrow_mut().record(leaf_index));
+        proof.push((0, current_node.get_value()?));
+
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
         Ok(proof)
     }
 
-    fn insert_value(&mut self, offset: usize, value: DBValue) -> Result<DBValue, TreeError> {
-        let old_value = self.get_value(offset)?;
-        let leaf = H::hash(&value);
-        let value_index = indices::value_index(offset, self.depth);
-        let leaf_index = indices::leaf_index(offset, self.depth);
-        self.storage.insert(value_index, Stored::Value(value));
-        self.storage.insert(leaf_index, Stored::Hash(leaf));
-        self.uncommitted.extend([value_index, leaf_index]);
+    fn insert_value(&mut self, key: &[u8], value: DBValue) -> Result<DBValue, TreeError> {
+        if key.len() != self.depth {
+            return Err(TreeError::IndexOutOfBounds);
+        };
 
-        let mut current_index = leaf_index;
-        let mut current_value = leaf;
+        let mut root_data: EncodedNode = self.lookup(self.root)?;
 
-        for _ in 0..self.depth {
-            let sibling_index = indices::sibling_indices(&[current_index])[0];
-            let sibling = self.get(sibling_index)?;
-            let parent_index = indices::parent_index(current_index);
+        let old_value = self.insert_at(&mut root_data, key, value)?;
 
-            let concat_nodes = if indices::is_left_index(current_index) {
-                let mut concat = current_value.as_mut().to_vec();
-                concat.append(&mut sibling.clone());
-                concat
-            } else {
-                let mut concat = sibling.clone().to_vec();
-                concat.append(&mut current_value.as_ref().to_vec());
-                concat
-            };
-
-            let parent_hash = H::hash(&concat_nodes);
-
-            self.storage.insert(parent_index, Stored::Hash(parent_hash));
-            self.uncommitted.push(parent_index);
-
-            current_index = parent_index;
-            current_value = parent_hash;
-        }
+        *self.root = root_data.hash::<H>();
+        self.storage
+            .insert(self.root.to_owned(), Stored::New(root_data));
 
         self.recorder
             .as_ref()
-            .map(|recorder| recorder.borrow_mut().record(value_index));
+            .map(|recorder| recorder.borrow_mut().record(key));
 
-        Ok(old_value)
+        old_value.get_value()
     }
 }

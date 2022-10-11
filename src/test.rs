@@ -1,15 +1,19 @@
 // use crate::{generate_proof, indices::authentication_indices, treedb::TreeDBBuilder, treedbmut::TreeDBMut, DBValue, Hasher, Recorder, Tree, TreeMut, EMPTY_PREFIX, hash_node};
-use crate::{indices::authentication_indices, EMPTY_PREFIX, treedb::{TreeDBBuilder, TreeDB}, Tree};
-use crate::{Hasher, Node, DBValue};
+use crate::{
+    indices::authentication_indices,
+    treedb::{TreeDB, TreeDBBuilder},
+    Tree, TreeDBMut, TreeDBMutBuilder, EMPTY_PREFIX, TreeMut,
+};
+use crate::{DBValue, Hasher, EncodedNode};
 use std::marker::PhantomData;
 use std::slice;
 
 use hash256_std_hasher::Hash256StdHasher;
 use hash_db::{AsHashDB, Prefix};
-use memory_db::{KeyFunction, MemoryDB, HashKey};
+use memory_db::{HashKey, KeyFunction, MemoryDB};
 use serde::Serialize;
 use sha3::Sha3_256;
-use winterfell::crypto::{Digest, hashers};
+use winterfell::crypto::{hashers, Digest};
 use winterfell::math::fields::f128;
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -43,30 +47,30 @@ fn test_values() -> Vec<u32> {
     values
 }
 
-fn build_data() -> (
-    Vec<Node>,
-    Vec<Node>,
-    usize,
-    <Sha3 as Hasher>::Out,
-) {
+fn build_data() -> (Vec<EncodedNode>, Vec<EncodedNode>, usize, <Sha3 as Hasher>::Out) {
     let depth = 3usize;
     let values: Vec<u32> = test_values();
-    let values: Vec<Node> = values.into_iter().map(|x| Node::Value(x.to_le_bytes().to_vec())).collect();
+    let values: Vec<EncodedNode> = values
+        .into_iter()
+        .map(|x| EncodedNode::Value(x.to_le_bytes().to_vec()))
+        .collect();
 
     let n = values.len();
-    let mut nodes: Vec<Node> = Vec::with_capacity(2 * n);
+    let mut nodes: Vec<EncodedNode> = Vec::with_capacity(2 * n);
     unsafe { nodes.set_len(2 * n) }
 
-    nodes[0] = Node::Value(Vec::new());
+    nodes[0] = EncodedNode::Value(Vec::new());
     nodes[n..].clone_from_slice(&values);
 
-    let leaf_pairs =
-        unsafe { slice::from_raw_parts(nodes.as_ptr() as *const [Node; 2], n) };
+    let leaf_pairs = unsafe { slice::from_raw_parts(nodes.as_ptr() as *const [EncodedNode; 2], n) };
 
     for i in (1..n).rev() {
         let left = &leaf_pairs[i][0];
         let right = &leaf_pairs[i][1];
-        nodes[i] = Node::Inner(left.hash::<Sha3>().as_ref().to_vec(), right.hash::<Sha3>().as_ref().to_vec());
+        nodes[i] = EncodedNode::Inner(
+            left.hash::<Sha3>().as_ref().to_vec(),
+            right.hash::<Sha3>().as_ref().to_vec(),
+        );
     }
 
     let root = nodes[1].hash::<Sha3>();
@@ -74,21 +78,28 @@ fn build_data() -> (
     (values, nodes, depth, root)
 }
 
-
-fn build_db_mock() -> (MemoryDB<Sha3, NoopKey<Sha3>, Vec<u8>>, <Sha3 as Hasher>::Out, usize) {
+fn build_db_mock() -> (
+    MemoryDB<Sha3, NoopKey<Sha3>, Vec<u8>>,
+    <Sha3 as Hasher>::Out,
+    usize,
+) {
     let (values, nodes, depth, root) = build_data();
     let mut memory_db = MemoryDB::<Sha3, NoopKey<Sha3>, Vec<u8>>::default();
 
     for node in values.iter() {
-        memory_db
-            .as_hash_db_mut()
-            .emplace(node.hash::<Sha3>(), EMPTY_PREFIX, bincode::serialize(node).unwrap());
+        memory_db.as_hash_db_mut().emplace(
+            node.hash::<Sha3>(),
+            EMPTY_PREFIX,
+            bincode::serialize(node).unwrap(),
+        );
     }
 
     for index in 1..nodes.len() {
-        memory_db
-            .as_hash_db_mut()
-            .emplace(nodes[index].hash::<Sha3>(), EMPTY_PREFIX, bincode::serialize(&nodes[index]).unwrap());
+        memory_db.as_hash_db_mut().emplace(
+            nodes[index].hash::<Sha3>(),
+            EMPTY_PREFIX,
+            bincode::serialize(&nodes[index]).unwrap(),
+        );
     }
 
     (memory_db, root, depth)
@@ -119,22 +130,22 @@ fn test_get_value() {
         Vec::from([1, 0, 0]),
         Vec::from([1, 0, 1]),
         Vec::from([1, 1, 0]),
-        Vec::from([1, 1, 1])
+        Vec::from([1, 1, 1]),
     ]);
-    for (value, key) in test_values.iter().zip(keys) {
+    for (value, key) in test_values.iter().zip(&keys) {
         assert_eq!(
-            u32::from_le_bytes(tree_db.get_value(&key).unwrap().try_into().unwrap()),
+            u32::from_le_bytes(tree_db.get_value(key).unwrap().try_into().unwrap()),
             *value
         )
     }
 
-    // let tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
-    // for (i, value) in test_values.iter().enumerate() {
-    //     assert_eq!(
-    //         u32::from_le_bytes(tree_db_mut.get_value(i).unwrap().try_into().unwrap()),
-    //         *value
-    //     )
-    // }
+    let tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
+    for (value, key) in test_values.iter().zip(keys) {
+        assert_eq!(
+            u32::from_le_bytes(tree_db_mut.get_value(&key).unwrap().try_into().unwrap()),
+            *value
+        )
+    }
 }
 
 #[test]
@@ -147,92 +158,137 @@ fn test_get_leaf() {
 
     let keys: Vec<Vec<u8>> = Vec::from([
         Vec::from([0, 0, 0]),
-        Vec::from([0 ,0, 1]),
+        Vec::from([0, 0, 1]),
         Vec::from([0, 1, 0]),
         Vec::from([0, 1, 1]),
         Vec::from([1, 0, 0]),
         Vec::from([1, 0, 1]),
         Vec::from([1, 1, 0]),
-        Vec::from([1, 1, 1])
+        Vec::from([1, 1, 1]),
     ]);
-    for (value, key) in test_values.iter().zip(keys) {
+    for (value, key) in test_values.iter().zip(&keys) {
         let leaf = Sha3::hash(&value.to_le_bytes());
-        assert_eq!(tree_db.get_leaf(&key).unwrap(), leaf)
+        assert_eq!(tree_db.get_leaf(key).unwrap(), leaf)
     }
 
-    // let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
-    // for (i, value) in test_values.iter().enumerate() {
-    //     let leaf = Sha3::hash(&value.to_le_bytes());
-    //     assert_eq!(tree_db_mut.get_leaf(i).unwrap(), leaf)
-    // }
+    let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    for (value, key) in test_values.iter().zip(keys) {
+        let leaf = Sha3::hash(&value.to_le_bytes());
+        assert_eq!(tree_db_mut.get_leaf(&key).unwrap(), leaf)
+    }
 }
 
 #[test]
 fn test_get_proof() {
-    let (mut memory_db, root, depth) = build_db_mock();
+    let (mut memory_db, mut root, depth) = build_db_mock();
+    let test_values = test_values();
 
     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
     let tree_db = tree_db_builder.build();
     let key = [0, 1, 1];
 
     let mut expected: Vec<(usize, DBValue)> = Vec::new();
+    expected.push((0, test_values[3].to_le_bytes().to_vec()));
     expected.push((1, tree_db.root().as_ref().to_vec()));
-    expected.push((2, tree_db.get(&[]).unwrap().get_inner_node_data(0).unwrap()));
-    expected.push((3, tree_db.get(&[]).unwrap().get_inner_node_data(1).unwrap()));
-    expected.push((4, tree_db.get(&[0]).unwrap().get_inner_node_data(0).unwrap()));
-    expected.push((5, tree_db.get(&[0]).unwrap().get_inner_node_data(1).unwrap()));
-    expected.push((10, tree_db.get(&[0, 1]).unwrap().get_inner_node_data(0).unwrap()));
-    expected.push((11, tree_db.get(&[0, 1]).unwrap().get_inner_node_data(1).unwrap()));
+    expected.push((
+        2,
+        tree_db.get(&[]).unwrap().get_inner_node_value(0).unwrap(),
+    ));
+    expected.push((
+        3,
+        tree_db.get(&[]).unwrap().get_inner_node_value(1).unwrap(),
+    ));
+    expected.push((
+        4,
+        tree_db.get(&[0]).unwrap().get_inner_node_value(0).unwrap(),
+    ));
+    expected.push((
+        5,
+        tree_db.get(&[0]).unwrap().get_inner_node_value(1).unwrap(),
+    ));
+    expected.push((
+        10,
+        tree_db
+            .get(&[0, 1])
+            .unwrap()
+            .get_inner_node_value(0)
+            .unwrap(),
+    ));
+    expected.push((
+        11,
+        tree_db
+            .get(&[0, 1])
+            .unwrap()
+            .get_inner_node_value(1)
+            .unwrap(),
+    ));
 
     let mut proof = tree_db.get_proof(&key).unwrap();
     proof.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(proof, expected);
 
-    // let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
-    // let mut proof = tree_db_mut.get_proof(2).unwrap();
-    // proof.sort_by(|a, b| b.0.cmp(&a.0));
-    // assert_eq!(proof, expected);
+    let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    let mut proof = tree_db_mut.get_proof(&key).unwrap();
+    proof.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(proof, expected);
 }
-//
-// #[test]
-// fn test_insert_tree_db_mut() {
-//     let (mut memory_db, mut root, depth) = build_db_mock();
-//     let test_values = test_values();
-//     let mut tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth.try_into().unwrap());
-//
-//     let new_value = 67u32;
-//
-//     let old_value = tree_db_mut
-//         .insert_value(3, new_value.to_le_bytes().to_vec())
-//         .unwrap();
-//     assert_eq!(old_value, test_values[3].to_le_bytes().to_vec());
-//
-//     let expected_leaf = Sha3::hash(&new_value.to_le_bytes().to_vec());
-//     assert_eq!(tree_db_mut.get_leaf(3).unwrap(), expected_leaf);
-//
-//     let expected_parent = {
-//         let mut concat = tree_db_mut.get_leaf(2).unwrap();
-//         concat.append(&mut expected_leaf.to_vec());
-//         Sha3::hash(&concat)
-//     };
-//     assert_eq!(tree_db_mut.get(5).unwrap(), expected_parent);
-//
-//     let expected_grandparent = {
-//         let mut concat = tree_db_mut.get(4).unwrap();
-//         concat.append(&mut expected_parent.to_vec());
-//         Sha3::hash(&concat)
-//     };
-//     assert_eq!(tree_db_mut.get(2).unwrap(), expected_grandparent);
-//
-//     let expected_root = {
-//         let mut concat = expected_grandparent.to_vec();
-//         let mut sibling = tree_db_mut.get(3).unwrap();
-//         concat.append(&mut sibling);
-//         Sha3::hash(&concat)
-//     };
-//     assert_eq!(tree_db_mut.get(1).unwrap(), expected_root);
-// }
-//
+
+#[test]
+fn test_insert_tree_db_mut() {
+    let (mut memory_db, mut root, depth) = build_db_mock();
+    let test_values = test_values();
+    let mut tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth.try_into().unwrap());
+
+    let key = Vec::from([0, 0, 0]);
+    let new_value = 67u32;
+
+    let old_value = tree_db_mut
+        .insert_value(&key, new_value.to_le_bytes().to_vec())
+        .unwrap();
+    assert_eq!(old_value, test_values[0].to_le_bytes().to_vec());
+
+    let expected_leaf = Sha3::hash(&new_value.to_le_bytes().to_vec());
+    assert_eq!(tree_db_mut.get_leaf(&key).unwrap(), expected_leaf);
+
+    let expected_value = new_value.to_le_bytes();
+    assert_eq!(tree_db_mut.get_value(&key).unwrap(), expected_value);
+
+    let expected_parent = {
+        let mut concat: Vec<u8> = Vec::new();
+        concat.append(&mut expected_leaf.to_vec());
+        concat.append(&mut tree_db_mut.get_leaf(&[0, 0, 1]).unwrap());
+        Sha3::hash(&concat).to_vec()
+    };
+    assert_eq!(
+        tree_db_mut
+            .get(&key[..key.len() - 1])
+            .unwrap()
+            .hash::<Sha3>()
+            .as_ref()
+            .to_vec(),
+        expected_parent
+    );
+
+    let expected_grandparent = {
+        let mut concat: Vec<u8> = Vec::new();
+        concat.append(&mut expected_parent.to_vec());
+        concat.append(&mut tree_db_mut.get(&[0, 1]).unwrap().hash::<Sha3>().to_vec());
+        Sha3::hash(&concat)
+    };
+    assert_eq!(
+        tree_db_mut.get(&[0]).unwrap().hash::<Sha3>(),
+        expected_grandparent
+    );
+
+    let expected_root = {
+        let mut concat = expected_grandparent.to_vec();
+        let mut sibling = tree_db_mut.get(&[1]).unwrap().hash::<Sha3>().to_vec();
+        concat.append(&mut sibling);
+        Sha3::hash(&concat).to_vec()
+    };
+    assert_eq!(tree_db_mut.root().to_vec(), expected_root);
+}
+
 // #[test]
 // fn test_commit_tree_db_mut() {
 //     let (mut memory_db, mut root, depth) = build_db_mock();
@@ -241,9 +297,9 @@ fn test_get_proof() {
 //     let _old_value = tree_db_mut
 //         .insert_value(3, new_value.to_le_bytes().to_vec())
 //         .unwrap();
-//
+
 //     tree_db_mut.commit();
-//
+
 //     let expected_root: DBValue = vec![
 //         221, 139, 96, 63, 186, 15, 51, 124, 240, 238, 232, 94, 45, 200, 201, 221, 210, 128, 67, 14,
 //         30, 252, 192, 76, 194, 31, 143, 116, 171, 178, 152, 98,

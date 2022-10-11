@@ -3,6 +3,7 @@
 #[cfg(feature = "std")]
 mod rstd {
     pub use std::{
+        convert,
         collections::{BTreeMap, BTreeSet},
         mem,
         vec::Vec,
@@ -12,66 +13,229 @@ mod rstd {
 #[cfg(not(feature = "std"))]
 mod rstd {
     pub use alloc::collections::{BTreeMap, BTreeSet, Vec};
-    pub use core::mem;
+    pub use core::{mem, convert};
 }
 
 mod indices;
 // mod proof;
 // mod recorder;
 mod treedb;
-// mod treedbmut;
+mod treedbmut;
 
 #[cfg(test)]
 mod test;
 
-use hash_db::{EMPTY_PREFIX, HashDBRef, Hasher};
+use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 // pub use proof::generate_proof;
 // pub use recorder::Recorder;
 pub use treedb::{TreeDB, TreeDBBuilder};
-// pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
+pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
 
 /// Database value
 pub type DBValue = Vec<u8>;
 
+pub enum NodeError {
+    FailedConversionFromEncoded,
+    IncorrectNodeType
+}
+
 /// Node Enumb
 /// Variants include: Value, Leaf, Inner
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum Node {
+pub enum EncodedNode {
     Value(DBValue),
     Inner(Vec<u8>, Vec<u8>),
 }
 
-impl Node {
+#[derive(Debug)]
+pub enum NodeHash<H> {
+    InMemory(H),
+    Hash(H)
+}
+
+impl<H> NodeHash<H> {
+    pub fn get_hash(&self) -> &H {
+        match self {
+            NodeHash::Hash(hash) => hash,
+            NodeHash::InMemory(hash) => hash
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Value {
+    Cached(DBValue),
+    New(DBValue)
+}
+
+impl Value {
+    pub fn get(&self) -> &DBValue {
+        match self {
+            Value::Cached(value) => value,
+            Value::New(value) => value
+        }
+    }
+}
+
+
+#[derive(Debug)]
+pub enum Node<H: Hasher> {
+    Value(Value),
+    Inner(NodeHash<H::Out>, NodeHash<H::Out>) 
+}
+
+impl<H: Hasher> rstd::convert::TryFrom<EncodedNode> for Node<H> {
+    type Error = NodeError;
+
+    fn try_from(encoded: EncodedNode) -> Result<Self, Self::Error> {
+        match encoded {
+            EncodedNode::Value(value) => Ok(Self::Value(Value::Cached(value))),
+            EncodedNode::Inner(left, right) => {
+                let left_hash = decode_hash::<H>(&left).unwrap();
+                let right_hash = decode_hash::<H>(&right).unwrap();
+                Ok(Self::Inner(NodeHash::Hash(left_hash), NodeHash::Hash(right_hash)))
+            }
+        }
+    }
+}
+
+impl<H: Hasher> Node<H> {
+    pub fn hash(&self) -> H::Out {
+        match self {
+            Node::Value(value) => H::hash(value.get()),
+            Node::Inner(left, right) => {
+                let mut combined = Vec::with_capacity(H::LENGTH * 2);
+                combined.extend_from_slice(left.get_hash().as_ref());
+                combined.extend_from_slice(right.get_hash().as_ref());
+                H::hash(&combined)
+            }
+        }
+    }
+
+    pub fn get_left_child(&self) -> Result<&NodeHash<H::Out>, NodeError> {
+        match self {
+            Node::Value(_) => Err(NodeError::IncorrectNodeType),
+            Node::Inner(left, _) => Ok(left)
+        }
+
+    }
+
+    pub fn get_right_child(&self) -> Result<&NodeHash<H::Out>, NodeError> {
+        match self {
+            Node::Value(_) => Err(NodeError::IncorrectNodeType),
+            Node::Inner(_, right) => Ok(right)
+        }
+    }
+
+    pub fn get_value(&self) -> Result<&Value, NodeError> {
+        match self {
+            Node::Value(value) => Ok(value),
+            Node::Inner(_, _) => Err(NodeError::IncorrectNodeType)
+        }
+    }
+
+    pub fn set_left_child_hash(&mut self, hash: NodeHash<H::Out>) -> Result<H::Out, NodeError> {
+        match self {
+            Node::Value(_) => Err(NodeError::IncorrectNodeType),
+            Node::Inner(left, _) => {
+                let old = left.get_hash().clone();
+                *left = hash;
+                Ok(old)
+            }
+        }
+    }
+
+    pub fn set_rigth_child_hash(&mut self, hash: NodeHash<H::Out>) -> Result<H::Out, NodeError> {
+        match self {
+            Node::Value(_) => Err(NodeError::IncorrectNodeType),
+            Node::Inner(_, right) => {
+                let old = right.get_hash().clone();
+                *right = hash;
+                Ok(old)
+            }
+        }
+    }
+
+    pub fn set_value(&mut self, new_value: Value) -> Result<H::Out, NodeError> {
+        match self {
+            Node::Value(value) => {
+                let old_hash = H::hash(value.get());
+                *value = new_value;
+                Ok(old_hash)
+            },
+            Node::Inner(_, _) => Err(NodeError::IncorrectNodeType)
+        }
+    }
+}
+
+impl EncodedNode {
     pub fn hash<H: Hasher>(&self) -> H::Out {
         match self {
-            Node::Inner(left, right) => {
+            EncodedNode::Inner(left, right) => {
                 let mut combined = Vec::with_capacity(H::LENGTH * 2);
                 combined.extend_from_slice(left);
                 combined.extend_from_slice(right);
                 H::hash(&combined)
-            },
-            Node::Value(value) => H::hash(&value),
+            }
+            EncodedNode::Value(value) => H::hash(&value),
         }
     }
 
-    pub fn get_inner_node_data(&self, node: u8) -> Result<Vec<u8>, TreeError> {
+    pub fn get_inner_node_hash<H: Hasher>(&self, node: u8) -> Result<H::Out, TreeError> {
         match self {
-            Node::Value(_) => Err(TreeError::UnexpectedNodeType),
-            Node::Inner(left, right) => if node == 0 { Ok(left.clone()) } else { Ok(right.clone()) }
+            EncodedNode::Value(_) => Err(TreeError::UnexpectedNodeType),
+            EncodedNode::Inner(left, right) => {
+                let data = if node == 0 { left } else { right };
+                Ok(decode_hash::<H>(data).unwrap())
+            }
+        }
+    }
+
+    pub fn get_inner_node_value(&self, node: u8) -> Result<Vec<u8>, TreeError> {
+        match self {
+            EncodedNode::Value(_) => Err(TreeError::UnexpectedNodeType),
+            EncodedNode::Inner(left, right) => {
+                if node == 0 {
+                    Ok(left.clone())
+                } else {
+                    Ok(right.clone())
+                }
+            }
+        }
+    }
+
+    pub fn set_inner_node_data(&mut self, node: u8, value: Vec<u8>) -> Result<(), TreeError> {
+        match self {
+            EncodedNode::Value(_) => Err(TreeError::UnexpectedNodeType),
+            EncodedNode::Inner(left, right) => {
+                if node == 0 {
+                    *left = value;
+                } else {
+                    *right = value;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub fn get_value(&self) -> Result<Vec<u8>, TreeError> {
+        match self {
+            EncodedNode::Value(value) => Ok(value.clone()),
+            EncodedNode::Inner(_, _) => Err(TreeError::UnexpectedNodeType),
         }
     }
 }
 
 pub fn decode_hash<H: Hasher>(data: &[u8]) -> Option<H::Out> {
-	if data.len() != H::LENGTH {
-		return None
-	}
-	let mut hash = H::Out::default();
-	hash.as_mut().copy_from_slice(data);
-	Some(hash)
+    if data.len() != H::LENGTH {
+        return None;
+    }
+    let mut hash = H::Out::default();
+    hash.as_mut().copy_from_slice(data);
+    Some(hash)
 }
 
 /// Tree Errors
@@ -90,7 +254,7 @@ pub enum TreeError {
 /// offset is the number of nodes from the left most node in the tree starting
 /// from 0.
 /// ```text
-///       1 *        <- tree root
+///       1 *         <- tree root
 ///       /   \
 ///      /     \
 ///   2 *      3 *    <- internal nodes

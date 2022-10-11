@@ -63,3 +63,15 @@ pub fn leaf_index(offset: usize, depth: usize) -> usize {
 pub fn value_index(offset: usize, depth: usize) -> usize {
     (1 << (depth + 1)) + offset
 }
+
+pub(crate) fn compute_index(key: &[u8]) -> usize {
+    let len = key.len();
+    let base: usize = 1 << len;
+    let multiplier: Vec<usize> = (0..len).rev().map(|x| 1 << x).collect();
+    let sum: usize = key
+        .iter()
+        .zip(multiplier)
+        .map(|(x, y)| (*x as usize) * y)
+        .sum();
+    base + sum
+}

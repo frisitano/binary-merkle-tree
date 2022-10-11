@@ -1,6 +1,7 @@
-use std::thread::current;
-
-use crate::{indices, DBValue, HashDBRef, Hasher, Tree, TreeError, TreeRecorder, EMPTY_PREFIX, Node, decode_hash};
+use crate::{
+    decode_hash, indices, DBValue, HashDBRef, Hasher, EncodedNode, Tree, TreeError, TreeRecorder,
+    EMPTY_PREFIX,
+};
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
     db: &'db dyn HashDBRef<H, DBValue>,
@@ -63,31 +64,26 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         self.db
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<Node, TreeError> {
-        // if index < 1 || (1 << self.depth) * 3 <= index {
-        //     return Err(TreeError::IndexOutOfBounds);
-        // }
-        let root_data = self.db.get(self.root, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)?;
+    pub fn lookup(&self, key: &H::Out) -> Result<EncodedNode, TreeError> {
+        let data = self
+            .db
+            .get(key, EMPTY_PREFIX)
+            .ok_or(TreeError::DataNotFound)?;
+        let data = bincode::deserialize(&data).unwrap();
+        Ok(data)
+    }
 
-        let mut current_node: Node;
-        current_node = bincode::deserialize(&root_data).unwrap();
+    pub fn get(&self, key: &[u8]) -> Result<EncodedNode, TreeError> {
+        let mut current_node = self.lookup(self.root)?;
 
         for &bit in key {
-            if let Node::Inner(left, right) = current_node {
-                let key = if bit == 0 { left } else { right };
-                let key = decode_hash::<H>(&key).unwrap();
-                let data = self.db.get(&key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)?;
-                current_node = bincode::deserialize(&data).unwrap();
-            } else {
-                return Err(TreeError::UnexpectedNodeType)
-            }
+            let key = current_node.get_inner_node_hash::<H>(bit)?;
+            current_node = self.lookup(&key)?;
         }
 
         Ok(current_node)
     }
 }
-
-
 
 impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
     fn root(&self) -> &H::Out {
@@ -106,16 +102,9 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         // let value_index = indices::value_index(offset, self.depth);
         let data = self.get(key);
 
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(key));
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
-        data.map(|x| {
-            match x {
-                Node::Value(value) => Ok(value),
-                Node::Inner(_,_) => Err(TreeError::UnexpectedNodeType)
-            }
-        })?
+        data.map(|node| node.get_value())?
     }
 
     fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError> {
@@ -125,22 +114,9 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
 
         let data = self.get(&key[..key.len() - 1]);
 
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(key));
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
-        data.map(|x| {
-            match x {
-                Node::Inner(left,right) => {
-                    if key[key.len()-1] == 0 {
-                        Ok(left)
-                    } else {
-                        Ok(right)
-                    }
-                },
-                Node::Value(_) => Err(TreeError::UnexpectedNodeType)
-            }
-        })?
+        data.map(|node| node.get_inner_node_value(key[key.len() - 1]))?
     }
 
     fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError> {
@@ -151,41 +127,41 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         let mut proof = Vec::new();
         proof.push((1, self.root.as_ref().to_vec()));
 
-        let root_data = self.db.get(self.root, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)?;
-        
-        let mut current_node: Node;
+        let root_data = self
+            .db
+            .get(self.root, EMPTY_PREFIX)
+            .ok_or(TreeError::DataNotFound)?;
+
+        let mut current_node: EncodedNode;
         current_node = bincode::deserialize(&root_data).unwrap();
 
         for (i, &bit) in key.iter().enumerate() {
-            let index = compute_index(&key[..i+1]);
+            let index = indices::compute_index(&key[..i + 1]);
             let left_index = if index % 2 == 0 { index } else { index ^ 1 };
-            println!("index: {}", index);
-            if let Node::Inner(left, right) = current_node {
-                let hash_left  = decode_hash::<H>(&left).unwrap();
+
+            if let EncodedNode::Inner(left, right) = current_node {
+                let hash_left = decode_hash::<H>(&left).unwrap();
                 let hash_right = decode_hash::<H>(&right).unwrap();
                 let key = if bit == 0 { hash_left } else { hash_right };
-                let data = self.db.get(&key, EMPTY_PREFIX).ok_or(TreeError::DataNotFound)?;
+                let data = self
+                    .db
+                    .get(&key, EMPTY_PREFIX)
+                    .ok_or(TreeError::DataNotFound)?;
                 current_node = bincode::deserialize(&data).unwrap();
 
-                proof.extend_from_slice(&[(left_index, hash_left.as_ref().to_vec()), (left_index + 1, hash_right.as_ref().to_vec())]);
+                proof.extend_from_slice(&[
+                    (left_index, hash_left.as_ref().to_vec()),
+                    (left_index + 1, hash_right.as_ref().to_vec()),
+                ]);
             } else {
-                return Err(TreeError::UnexpectedNodeType)
+                return Err(TreeError::UnexpectedNodeType);
             }
         }
 
-        self.recorder
-            .as_ref()
-            .map(|r| r.borrow_mut().record(key));
+        proof.push((0, current_node.get_value()?));
+
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
         Ok(proof)
     }
-}
-
-fn compute_index(key: &[u8]) -> usize {
-    let len = key.len();
-    let base: usize = 1 << len;
-    println!("len {} base {}", len, base);
-    let multiplier: Vec<usize> = (0..len).rev().map(|x| 1 << x).collect();
-    let sum: usize = key.iter().zip(multiplier).map(|(x, y)| (*x as usize) * y).sum();
-    base + sum
 }
