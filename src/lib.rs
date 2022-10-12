@@ -28,6 +28,7 @@ mod test;
 use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::clone::Clone;
 
 // pub use proof::generate_proof;
 // pub use recorder::Recorder;
@@ -50,14 +51,23 @@ pub enum EncodedNode {
     Inner(Vec<u8>, Vec<u8>),
 }
 
-#[derive(Debug)]
-pub enum NodeHash<H> {
-    InMemory(H),
-    Hash(H)
+impl<H: Hasher> rstd::convert::From<Node<H>> for EncodedNode {
+    fn from(node: Node<H>) -> Self {
+        match node {
+            Node::Value(value) => EncodedNode::Value(value.get().to_vec()),
+            Node::Inner(left, right) => EncodedNode::Inner(left.get_hash().as_ref().to_vec(), right.get_hash().as_ref().to_vec())
+        }
+    }
 }
 
-impl<H> NodeHash<H> {
-    pub fn get_hash(&self) -> &H {
+#[derive(Debug)]
+pub enum NodeHash<H: Hasher> {
+    InMemory(H::Out),
+    Hash(H::Out)
+}
+
+impl<H: Hasher> NodeHash<H> {
+    pub fn get_hash(&self) -> &H::Out {
         match self {
             NodeHash::Hash(hash) => hash,
             NodeHash::InMemory(hash) => hash
@@ -65,7 +75,16 @@ impl<H> NodeHash<H> {
     }
 }
 
-#[derive(Debug)]
+impl<H: Hasher> Clone for NodeHash<H> {
+    fn clone(&self) -> Self {
+        match self {
+            NodeHash::Hash(hash) => NodeHash::Hash(hash.clone()),
+            NodeHash::InMemory(hash) => NodeHash::InMemory(hash.clone())
+        }
+    }
+} 
+
+#[derive(Debug, Clone)]
 pub enum Value {
     Cached(DBValue),
     New(DBValue)
@@ -84,7 +103,16 @@ impl Value {
 #[derive(Debug)]
 pub enum Node<H: Hasher> {
     Value(Value),
-    Inner(NodeHash<H::Out>, NodeHash<H::Out>) 
+    Inner(NodeHash<H>, NodeHash<H>) 
+}
+
+impl<H: Hasher> Clone for Node<H> {
+    fn clone(&self) -> Self {
+        match self {
+            Node::Value(value) => Node::Value(value.clone()),
+            Node::Inner(left, right) => Node::Inner(left.clone(), right.clone())
+        }
+    }
 }
 
 impl<H: Hasher> rstd::convert::TryFrom<EncodedNode> for Node<H> {
@@ -115,7 +143,15 @@ impl<H: Hasher> Node<H> {
         }
     }
 
-    pub fn get_left_child(&self) -> Result<&NodeHash<H::Out>, NodeError> {
+    pub fn get_child(&self, bit: u8) -> Result<&NodeHash<H>, NodeError> {
+        if bit == 0 {
+            self.get_left_child()
+        } else {
+            self.get_right_child()
+        }
+    }
+
+    pub fn get_left_child(&self) -> Result<&NodeHash<H>, NodeError> {
         match self {
             Node::Value(_) => Err(NodeError::IncorrectNodeType),
             Node::Inner(left, _) => Ok(left)
@@ -123,7 +159,7 @@ impl<H: Hasher> Node<H> {
 
     }
 
-    pub fn get_right_child(&self) -> Result<&NodeHash<H::Out>, NodeError> {
+    pub fn get_right_child(&self) -> Result<&NodeHash<H>, NodeError> {
         match self {
             Node::Value(_) => Err(NodeError::IncorrectNodeType),
             Node::Inner(_, right) => Ok(right)
@@ -137,7 +173,15 @@ impl<H: Hasher> Node<H> {
         }
     }
 
-    pub fn set_left_child_hash(&mut self, hash: NodeHash<H::Out>) -> Result<H::Out, NodeError> {
+    pub fn set_child_hash(&mut self, bit: u8, hash: NodeHash<H>) -> Result<H::Out, NodeError> {
+        if bit == 0 {
+            self.set_left_child_hash(hash)
+        } else {
+            self.set_rigth_child_hash(hash)
+        }
+    }
+
+    pub fn set_left_child_hash(&mut self, hash: NodeHash<H>) -> Result<H::Out, NodeError> {
         match self {
             Node::Value(_) => Err(NodeError::IncorrectNodeType),
             Node::Inner(left, _) => {
@@ -148,7 +192,7 @@ impl<H: Hasher> Node<H> {
         }
     }
 
-    pub fn set_rigth_child_hash(&mut self, hash: NodeHash<H::Out>) -> Result<H::Out, NodeError> {
+    pub fn set_rigth_child_hash(&mut self, hash: NodeHash<H>) -> Result<H::Out, NodeError> {
         match self {
             Node::Value(_) => Err(NodeError::IncorrectNodeType),
             Node::Inner(_, right) => {
@@ -295,7 +339,7 @@ pub trait TreeMut<H: Hasher> {
     fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get the leaf hash at the specified index.
-    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError>;
+    fn get_leaf(&self, key: &[u8]) -> Result<H::Out, TreeError>;
 
     /// Get an inclusion proof for the leaf at the specified index.
     fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError>;

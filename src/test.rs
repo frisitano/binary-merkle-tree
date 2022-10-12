@@ -139,7 +139,7 @@ fn test_get_value() {
         )
     }
 
-    let tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
+    let tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
     for (value, key) in test_values.iter().zip(keys) {
         assert_eq!(
             u32::from_le_bytes(tree_db_mut.get_value(&key).unwrap().try_into().unwrap()),
@@ -171,7 +171,7 @@ fn test_get_leaf() {
         assert_eq!(tree_db.get_leaf(key).unwrap(), leaf)
     }
 
-    let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    let tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
     for (value, key) in test_values.iter().zip(keys) {
         let leaf = Sha3::hash(&value.to_le_bytes());
         assert_eq!(tree_db_mut.get_leaf(&key).unwrap(), leaf)
@@ -227,7 +227,7 @@ fn test_get_proof() {
     proof.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(proof, expected);
 
-    let tree_db_mut = TreeDBMut::<Sha3>::new(&mut memory_db, &mut root, depth);
+    let tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
     let mut proof = tree_db_mut.get_proof(&key).unwrap();
     proof.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(proof, expected);
@@ -237,7 +237,7 @@ fn test_get_proof() {
 fn test_insert_tree_db_mut() {
     let (mut memory_db, mut root, depth) = build_db_mock();
     let test_values = test_values();
-    let mut tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth.try_into().unwrap());
+    let mut tree_db_mut = TreeDBMutBuilder::new(&mut memory_db, &mut root, depth.try_into().unwrap()).build();
 
     let key = Vec::from([0, 0, 0]);
     let new_value = 67u32;
@@ -256,14 +256,14 @@ fn test_insert_tree_db_mut() {
     let expected_parent = {
         let mut concat: Vec<u8> = Vec::new();
         concat.append(&mut expected_leaf.to_vec());
-        concat.append(&mut tree_db_mut.get_leaf(&[0, 0, 1]).unwrap());
+        concat.append(&mut tree_db_mut.get_leaf(&[0, 0, 1]).unwrap().to_vec());
         Sha3::hash(&concat).to_vec()
     };
     assert_eq!(
         tree_db_mut
             .get(&key[..key.len() - 1])
             .unwrap()
-            .hash::<Sha3>()
+            .hash()
             .as_ref()
             .to_vec(),
         expected_parent
@@ -272,17 +272,17 @@ fn test_insert_tree_db_mut() {
     let expected_grandparent = {
         let mut concat: Vec<u8> = Vec::new();
         concat.append(&mut expected_parent.to_vec());
-        concat.append(&mut tree_db_mut.get(&[0, 1]).unwrap().hash::<Sha3>().to_vec());
+        concat.append(&mut tree_db_mut.get(&[0, 1]).unwrap().hash().to_vec());
         Sha3::hash(&concat)
     };
     assert_eq!(
-        tree_db_mut.get(&[0]).unwrap().hash::<Sha3>(),
+        tree_db_mut.get(&[0]).unwrap().hash(),
         expected_grandparent
     );
 
     let expected_root = {
         let mut concat = expected_grandparent.to_vec();
-        let mut sibling = tree_db_mut.get(&[1]).unwrap().hash::<Sha3>().to_vec();
+        let mut sibling = tree_db_mut.get(&[1]).unwrap().hash().to_vec();
         concat.append(&mut sibling);
         Sha3::hash(&concat).to_vec()
     };
