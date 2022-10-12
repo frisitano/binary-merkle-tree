@@ -126,7 +126,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         // if index < 1 || (1 << self.depth) * 3 <= index {
         //     return Err(TreeError::IndexOutOfBounds);
         // }
-        let mut current_node = self.lookup(self.root)?;
+        let mut current_node = self.lookup(self.root_handle.get_hash())?;
 
         for &bit in key {
             let key  = if bit == 0 {
@@ -188,26 +188,6 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         }
 
 
-        // for node in self.uncommitted.drain(..) {
-        //     let value = &self.storage[&node];
-        //     let key = H::hash(&node.to_le_bytes());
-
-        //     if self.db.contains(&key, EMPTY_PREFIX) {
-        //         self.db.remove(&key, EMPTY_PREFIX);
-        //     }
-
-        //     let data = match value {
-        //         Stored::Value(value) => value.clone(),
-        //         Stored::Hash(hash) => hash.as_ref().to_vec(),
-        //     };
-        //     self.db.emplace(key, EMPTY_PREFIX, data);
-
-        //     if node == 1 {
-        //         if let Stored::Hash(root) = value {
-        //             *self.root = root.clone();
-        //         }
-        //     }
-        // }
     }
 
     fn commit_child(&mut self, node: Node<H>) {
@@ -248,7 +228,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
 
 impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
     fn root(&mut self) -> &H::Out {
-        // self.commit();
+        self.commit();
         self.root
     }
 
@@ -332,13 +312,15 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         };
 
-        let mut root_data: Node<H> = self.lookup(self.root)?;
+        let mut root_data: Node<H> = self.lookup(&self.root_handle.get_hash())?;
 
         let old_value = self.insert_at(&mut root_data, key, value)?;
 
-        *self.root = root_data.hash();
         self.storage
-            .insert(self.root.to_owned(), Stored::New(root_data));
+            .insert(root_data.hash(), Stored::New(root_data.clone()));
+
+        self.root_handle = NodeHash::InMemory(root_data.hash());
+
 
         self.recorder
             .as_ref()

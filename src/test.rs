@@ -289,25 +289,27 @@ fn test_insert_tree_db_mut() {
     assert_eq!(tree_db_mut.root().to_vec(), expected_root);
 }
 
-// #[test]
-// fn test_commit_tree_db_mut() {
-//     let (mut memory_db, mut root, depth) = build_db_mock();
-//     let mut tree_db_mut = TreeDBMut::new(&mut memory_db, &mut root, depth);
-//     let new_value = 67u32;
-//     let _old_value = tree_db_mut
-//         .insert_value(3, new_value.to_le_bytes().to_vec())
-//         .unwrap();
+#[test]
+fn test_commit_tree_db_mut() {
+    let (mut memory_db, mut root, depth) = build_db_mock();
+    let mut tree_db_mut = TreeDBMutBuilder::new(&mut memory_db, &mut root, depth).build();
+    let new_value = 67u32;
+    let new_value_bytes = new_value.to_le_bytes().to_vec();
+    let _old_value = tree_db_mut
+        .insert_value(&[0, 1, 1], new_value_bytes.clone())
+        .unwrap();
 
-//     tree_db_mut.commit();
+    tree_db_mut.commit();
 
-//     let expected_root: DBValue = vec![
-//         221, 139, 96, 63, 186, 15, 51, 124, 240, 238, 232, 94, 45, 200, 201, 221, 210, 128, 67, 14,
-//         30, 252, 192, 76, 194, 31, 143, 116, 171, 178, 152, 98,
-//     ];
-//     let root = tree_db_mut.get(1).unwrap();
-//     assert_eq!(root, expected_root);
-//     assert_eq!(tree_db_mut.root(), expected_root.as_slice());
-// }
+    let expected_root: DBValue = vec![
+        221, 139, 96, 63, 186, 15, 51, 124, 240, 238, 232, 94, 45, 200, 201, 221, 210, 128, 67, 14,
+        30, 252, 192, 76, 194, 31, 143, 116, 171, 178, 152, 98,
+    ];
+    assert_eq!(tree_db_mut.root().to_vec(), expected_root);
+    let retrieved_node: EncodedNode = bincode::deserialize(&memory_db.as_hash_db().get(&Sha3::hash(&new_value_bytes), EMPTY_PREFIX).unwrap()).unwrap();
+    assert_eq!(retrieved_node.get_value().unwrap(), new_value_bytes);
+
+}
 //
 // #[test]
 // fn test_recorder() {
