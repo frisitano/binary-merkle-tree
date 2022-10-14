@@ -1,5 +1,5 @@
 use crate::{
-    decode_hash, indices, DBValue, HashDBRef, Hasher, EncodedNode, Tree, TreeError, TreeRecorder,
+    decode_hash, indices, DBValue, EncodedNode, HashDBRef, Hasher, Tree, TreeError, TreeRecorder,
     EMPTY_PREFIX,
 };
 

@@ -2,9 +2,9 @@
 use crate::{
     indices::authentication_indices,
     treedb::{TreeDB, TreeDBBuilder},
-    Tree, TreeDBMut, TreeDBMutBuilder, EMPTY_PREFIX, TreeMut,
+    Tree, TreeDBMut, TreeDBMutBuilder, TreeMut, EMPTY_PREFIX,
 };
-use crate::{DBValue, Hasher, EncodedNode};
+use crate::{node::EncodedNode, DBValue, Hasher};
 use std::marker::PhantomData;
 use std::slice;
 
@@ -47,7 +47,12 @@ fn test_values() -> Vec<u32> {
     values
 }
 
-fn build_data() -> (Vec<EncodedNode>, Vec<EncodedNode>, usize, <Sha3 as Hasher>::Out) {
+fn build_data() -> (
+    Vec<EncodedNode>,
+    Vec<EncodedNode>,
+    usize,
+    <Sha3 as Hasher>::Out,
+) {
     let depth = 3usize;
     let values: Vec<u32> = test_values();
     let values: Vec<EncodedNode> = values
@@ -237,13 +242,14 @@ fn test_get_proof() {
 fn test_insert_tree_db_mut() {
     let (mut memory_db, mut root, depth) = build_db_mock();
     let test_values = test_values();
-    let mut tree_db_mut = TreeDBMutBuilder::new(&mut memory_db, &mut root, depth.try_into().unwrap()).build();
+    let mut tree_db_mut =
+        TreeDBMutBuilder::new(&mut memory_db, &mut root, depth.try_into().unwrap()).build();
 
     let key = Vec::from([0, 0, 0]);
     let new_value = 67u32;
 
     let old_value = tree_db_mut
-        .insert_value(&key, new_value.to_le_bytes().to_vec())
+        .insert(&key, new_value.to_le_bytes().to_vec())
         .unwrap();
     assert_eq!(old_value, test_values[0].to_le_bytes().to_vec());
 
@@ -275,10 +281,7 @@ fn test_insert_tree_db_mut() {
         concat.append(&mut tree_db_mut.get(&[0, 1]).unwrap().hash().to_vec());
         Sha3::hash(&concat)
     };
-    assert_eq!(
-        tree_db_mut.get(&[0]).unwrap().hash(),
-        expected_grandparent
-    );
+    assert_eq!(tree_db_mut.get(&[0]).unwrap().hash(), expected_grandparent);
 
     let expected_root = {
         let mut concat = expected_grandparent.to_vec();
@@ -296,7 +299,7 @@ fn test_commit_tree_db_mut() {
     let new_value = 67u32;
     let new_value_bytes = new_value.to_le_bytes().to_vec();
     let _old_value = tree_db_mut
-        .insert_value(&[0, 1, 1], new_value_bytes.clone())
+        .insert(&[0, 1, 1], new_value_bytes.clone())
         .unwrap();
 
     tree_db_mut.commit();
@@ -306,9 +309,14 @@ fn test_commit_tree_db_mut() {
         30, 252, 192, 76, 194, 31, 143, 116, 171, 178, 152, 98,
     ];
     assert_eq!(tree_db_mut.root().to_vec(), expected_root);
-    let retrieved_node: EncodedNode = bincode::deserialize(&memory_db.as_hash_db().get(&Sha3::hash(&new_value_bytes), EMPTY_PREFIX).unwrap()).unwrap();
+    let retrieved_node: EncodedNode = bincode::deserialize(
+        &memory_db
+            .as_hash_db()
+            .get(&Sha3::hash(&new_value_bytes), EMPTY_PREFIX)
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(retrieved_node.get_value().unwrap(), new_value_bytes);
-
 }
 //
 // #[test]
