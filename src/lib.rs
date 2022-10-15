@@ -46,6 +46,8 @@ pub enum TreeError {
     DataNotFound,
     IndexOutOfBounds,
     UnexpectedNodeType,
+    NodeDeserializationFailed,
+    NodeIndexOutOfBounds
 }
 
 /// An index-value datastore implemented as a database-backed binary merkle tree
