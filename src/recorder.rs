@@ -1,27 +1,27 @@
-// use crate::{rstd::BTreeSet, TreeRecorder};
-//
-// /// Record node accesses.
-// pub struct Recorder {
-//     nodes: BTreeSet<usize>,
-// }
-//
-// impl Recorder {
-//     /// Create a new `Recorder`.
-//     pub fn new() -> Self {
-//         Self {
-//             nodes: BTreeSet::new(),
-//         }
-//     }
-//
-//     /// Drain all visited nodes.
-//     pub fn drain(&mut self) -> Vec<usize> {
-//         let nodes = std::mem::take(&mut self.nodes);
-//         nodes.into_iter().collect()
-//     }
-// }
-//
-// impl TreeRecorder for Recorder {
-//     fn record(&mut self, node: usize) {
-//         self.nodes.insert(node);
-//     }
-// }
+use crate::{TreeRecorder, Node, Hasher};
+
+/// Record node accesses.
+pub struct Recorder<H: Hasher> {
+    nodes: Vec<Node<H>>,
+}
+
+impl<H: Hasher> Recorder<H> {
+    /// Create a new `Recorder`.
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+        }
+    }
+
+    /// Drain all visited nodes.
+    pub fn drain(&mut self) -> Vec<Node<H>> {
+        let nodes = std::mem::take(&mut self.nodes);
+        nodes.into_iter().collect()
+    }
+}
+
+impl<H: Hasher> TreeRecorder<H> for Recorder<H> {
+    fn record(&mut self, node: Node<H>) {
+        self.nodes.push(node);
+    }
+}

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, thread::current};
 
 use crate::{
-    indices, node::decode_hash, node::EncodedNode, node::NodeHash, node::Value, rstd::BTreeMap,
+    indices, node::decode_hash, node::EncodedNode, node::NodeHash, node::Value,
     DBValue, Node, TreeError, TreeMut, TreeRecorder,
 };
 use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
@@ -29,7 +29,7 @@ pub struct TreeDBMutBuilder<'db, H: Hasher> {
     db: &'db mut dyn HashDB<H, DBValue>,
     root: &'db mut H::Out,
     depth: usize,
-    recorder: Option<&'db mut dyn TreeRecorder>,
+    recorder: Option<&'db mut dyn TreeRecorder<H>>,
 }
 
 impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
@@ -42,14 +42,14 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
         }
     }
 
-    pub fn with_recorder(mut self, recorder: &'db mut dyn TreeRecorder) -> Self {
+    pub fn with_recorder(mut self, recorder: &'db mut dyn TreeRecorder<H>) -> Self {
         self.recorder = Some(recorder);
         self
     }
 
     pub fn with_optional_recorder<'recorder: 'db>(
         mut self,
-        recorder: Option<&'recorder mut dyn TreeRecorder>,
+        recorder: Option<&'recorder mut dyn TreeRecorder<H>>,
     ) -> Self {
         self.recorder = recorder.map(|r| r as _);
         self
@@ -80,7 +80,7 @@ pub struct TreeDBMut<'a, H: Hasher> {
     root: &'a mut H::Out,
     root_handle: NodeHash<H>,
     depth: usize,
-    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>,
+    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder<H>>>,
 }
 
 impl<'a, H: Hasher> TreeDBMut<'a, H> {
@@ -103,7 +103,8 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
             .get(key, EMPTY_PREFIX)
             .ok_or(TreeError::DataNotFound)?;
         let node: EncodedNode = bincode::deserialize(&data).unwrap();
-        let node = node.try_into()?;
+        let node: Node<H> = node.try_into()?;
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(node.clone()));
 
         Ok(node)
     }
@@ -230,7 +231,6 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
         let data = self
             .get(key)
             .map(|node| node.get_value().map(|x| x.get().to_owned()))?;
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
         data
     }
@@ -246,7 +246,6 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
                 node.get_child(key[key.len() - 1])
                     .map(|x| x.get_hash().to_owned())
             })?;
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
         data
     }
@@ -292,8 +291,6 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
 
         proof.push((0, current_node.get_value()?));
 
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
-
         Ok(proof)
     }
 
@@ -310,10 +307,6 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             .insert(root_data.hash(), Stored::New(root_data.clone()));
 
         self.root_handle = NodeHash::InMemory(root_data.hash());
-
-        self.recorder
-            .as_ref()
-            .map(|recorder| recorder.borrow_mut().record(key));
 
         old_value
             .get_value()

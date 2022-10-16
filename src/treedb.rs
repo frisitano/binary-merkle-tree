@@ -1,13 +1,13 @@
 use crate::{
     decode_hash, indices, DBValue, EncodedNode, HashDBRef, Hasher, Tree, TreeError, TreeRecorder,
-    EMPTY_PREFIX,
+    EMPTY_PREFIX, Node
 };
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
     db: &'db dyn HashDBRef<H, DBValue>,
     root: &'db H::Out,
     depth: usize,
-    recorder: Option<&'db mut dyn TreeRecorder>,
+    recorder: Option<&'db mut dyn TreeRecorder<H>>,
 }
 
 impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
@@ -22,7 +22,7 @@ impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
 
     pub fn with_recorder<'recorder: 'db>(
         mut self,
-        recorder: &'recorder mut dyn TreeRecorder,
+        recorder: &'recorder mut dyn TreeRecorder<H>,
     ) -> Self {
         self.recorder = Some(recorder);
         self
@@ -30,7 +30,7 @@ impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
 
     pub fn with_optional_recorder<'recorder: 'db>(
         mut self,
-        recorder: Option<&'recorder mut dyn TreeRecorder>,
+        recorder: Option<&'recorder mut dyn TreeRecorder<H>>,
     ) -> Self {
         self.recorder = recorder.map(|r| r as _);
         self
@@ -55,7 +55,7 @@ pub struct TreeDB<'a, H: Hasher> {
     db: &'a dyn HashDBRef<H, DBValue>,
     root: &'a H::Out,
     depth: usize,
-    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder>>,
+    recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder<H>>>,
 }
 
 impl<'a, H: Hasher> TreeDB<'a, H> {
@@ -64,21 +64,46 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         self.db
     }
 
-    pub fn lookup(&self, key: &H::Out) -> Result<EncodedNode, TreeError> {
+    // pub fn lookup(&self, key: &H::Out) -> Result<Node, TreeError> {
+    //     let data = self
+    //         .db
+    //         .get(key, EMPTY_PREFIX)
+    //         .ok_or(TreeError::DataNotFound)?;
+    //     let data: EncodedNode = bincode::deserialize(&data).unwrap();
+    //     let node: Node = data.into();
+    //     Ok(data)
+    // }
+
+    // pub fn get(&self, key: &[u8]) -> Result<EncodedNode, TreeError> {
+    //     let mut current_node = self.lookup(self.root)?;
+
+    //     for &bit in key {
+    //         let key = current_node.get_inner_node_hash::<H>(bit)?;
+    //         current_node = self.lookup(&key)?;
+    //     }
+
+    //     Ok(current_node)
+    // }
+    pub fn lookup(&self, key: &H::Out) -> Result<Node<H>, TreeError> {
         let data = self
             .db
             .get(key, EMPTY_PREFIX)
             .ok_or(TreeError::DataNotFound)?;
-        let data = bincode::deserialize(&data).unwrap();
-        Ok(data)
+        let node: EncodedNode = bincode::deserialize(&data).unwrap();
+        let node: Node<H> = node.try_into()?;
+        self.recorder.as_ref().map(|r| r.borrow_mut().record(node.clone()));
+        Ok(node)
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<EncodedNode, TreeError> {
+    pub fn get(&self, key: &[u8]) -> Result<Node<H>, TreeError> {
+        // if index < 1 || (1 << self.depth) * 3 <= index {
+        //     return Err(TreeError::IndexOutOfBounds);
+        // }
         let mut current_node = self.lookup(self.root)?;
 
         for &bit in key {
-            let key = current_node.get_inner_node_hash::<H>(bit)?;
-            current_node = self.lookup(&key)?;
+            let key = current_node.get_child(bit)?.get_hash();
+            current_node = self.lookup(key)?;
         }
 
         Ok(current_node)
@@ -99,24 +124,26 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        // let value_index = indices::value_index(offset, self.depth);
-        let data = self.get(key);
+        let data = self
+            .get(key)
+            .map(|node| node.get_value().map(|x| x.get().to_owned()))?;
 
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
-
-        data.map(|node| node.get_value())?
+        data
     }
 
-    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError> {
+    fn get_leaf(&self, key: &[u8]) -> Result<H::Out, TreeError> {
         if key.len() != self.depth {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let data = self.get(&key[..key.len() - 1]);
+        let data = self
+            .get(&key[..key.len() - 1])
+            .map(|node| {
+                node.get_child(key[key.len() - 1])
+                    .map(|x| x.get_hash().to_owned())
+            })?;
 
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
-
-        data.map(|node| node.get_inner_node_value(key[key.len() - 1]))?
+        data
     }
 
     fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError> {
@@ -159,8 +186,6 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         }
 
         proof.push((0, current_node.get_value()?));
-
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(key));
 
         Ok(proof)
     }

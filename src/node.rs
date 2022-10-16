@@ -1,9 +1,7 @@
 
 use std::clone::Clone;
 
-use core::convert;
-
-use super::rstd;
+use super::rstd::convert::{From, TryFrom};
 
 use hash_db::Hasher;
 
@@ -21,7 +19,7 @@ pub enum EncodedNode {
     Inner(Vec<u8>, Vec<u8>),
 }
 
-impl<H: Hasher> rstd::convert::From<Node<H>> for EncodedNode {
+impl<H: Hasher> From<Node<H>> for EncodedNode {
     fn from(node: Node<H>) -> Self {
         match node {
             Node::Value(value) => EncodedNode::Value(value.get().to_vec()),
@@ -87,7 +85,7 @@ impl<H: Hasher> Clone for Node<H> {
     }
 }
 
-impl<H: Hasher> rstd::convert::TryFrom<EncodedNode> for Node<H> {
+impl<H: Hasher> TryFrom<EncodedNode> for Node<H> {
     type Error = TreeError;
 
     fn try_from(encoded: EncodedNode) -> Result<Self, Self::Error> {

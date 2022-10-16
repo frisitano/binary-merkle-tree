@@ -3,7 +3,6 @@
 #[cfg(feature = "std")]
 mod rstd {
     pub use std::{
-        collections::{BTreeMap, BTreeSet},
         convert, mem,
         vec::Vec,
     };
@@ -11,13 +10,13 @@ mod rstd {
 
 #[cfg(not(feature = "std"))]
 mod rstd {
-    pub use alloc::collections::{BTreeMap, BTreeSet, Vec};
+    pub use alloc::collections::Vec;
     pub use core::mem;
 }
 
 mod indices;
 // mod proof;
-// mod recorder;
+mod recorder;
 mod node;
 mod treedb;
 mod treedbmut;
@@ -32,10 +31,10 @@ use std::clone::Clone;
 use std::marker::PhantomData;
 
 // pub use proof::generate_proof;
-// pub use recorder::Recorder;
 pub use node::{decode_hash, EncodedNode, Node};
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
+pub use recorder::Recorder;
 
 /// Database value
 pub type DBValue = Vec<u8>;
@@ -81,7 +80,7 @@ pub trait Tree<H: Hasher> {
     fn get_value(&self, key: &[u8]) -> Result<DBValue, TreeError>;
 
     /// Get the leaf at the specified index.
-    fn get_leaf(&self, key: &[u8]) -> Result<DBValue, TreeError>;
+    fn get_leaf(&self, key: &[u8]) -> Result<H::Out, TreeError>;
 
     /// Get an inclusion proof for the leaf at the specified index.
     fn get_proof(&self, key: &[u8]) -> Result<Vec<(usize, DBValue)>, TreeError>;
@@ -112,7 +111,7 @@ pub trait TreeMut<H: Hasher> {
 ///
 /// The `TreeRecorder is used to construct a proof that attests to the inclusion of accessed
 /// nodes in a tree.
-pub trait TreeRecorder {
+pub trait TreeRecorder<H: Hasher> {
     /// Record access of the the given node index.
-    fn record(&mut self, key: &[u8]);
+    fn record(&mut self, node: Node<H>);
 }
