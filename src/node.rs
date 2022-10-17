@@ -1,15 +1,11 @@
-
-use std::clone::Clone;
-
-use super::rstd::convert::{From, TryFrom};
-
-use hash_db::Hasher;
-
-use std::vec::Vec;
-
-use super::{DBValue, TreeError};
+use super::{
+    rstd::{
+        convert::{From, TryFrom},
+        Vec,
+    },
+    DBValue, Hasher, TreeError,
+};
 use serde::{Deserialize, Serialize};
-
 
 /// Node Enumb
 /// Variants include: Value, Leaf, Inner
@@ -18,6 +14,8 @@ pub enum EncodedNode {
     Value(DBValue),
     Inner(Vec<u8>, Vec<u8>),
 }
+
+
 
 impl<H: Hasher> From<Node<H>> for EncodedNode {
     fn from(node: Node<H>) -> Self {
@@ -85,6 +83,43 @@ impl<H: Hasher> Clone for Node<H> {
     }
 }
 
+impl<H: Hasher> TryFrom<Vec<u8>> for Node<H> {
+    type Error = TreeError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.get(0) {
+            Some(0u8) => Ok(Node::Value(Value::Cached(value[1..].to_vec()))),
+            Some(1u8) => {
+                let left_hash = decode_hash::<H>(&value[1..(H::LENGTH+1)])?;
+                let right_hash = decode_hash::<H>(&value[(H::LENGTH+1)..])?;
+                Ok(Node::Inner(NodeHash::Hash(left_hash), NodeHash::Hash(right_hash)))
+            },
+            _ => Err(TreeError::NodeDeserializationFailed)
+        }
+    }
+}
+
+impl<H: Hasher> From<Node<H>> for Vec<u8> {
+    fn from(node: Node<H>) -> Self {
+        match node {
+            Node::Value(value) => {
+                let value = value.get();
+                let mut combined = Vec::with_capacity(value.len() + 1);
+                combined.push(0);
+                combined.extend_from_slice(value);
+                combined
+            }
+            Node::Inner(left, right) => {
+                let mut combined = Vec::with_capacity(1 + H::LENGTH * 2);
+                combined.push(1);
+                combined.extend_from_slice(left.get_hash().as_ref());
+                combined.extend_from_slice(right.get_hash().as_ref());
+                combined
+            }
+        }
+    }
+}
+
 impl<H: Hasher> TryFrom<EncodedNode> for Node<H> {
     type Error = TreeError;
 
@@ -92,8 +127,10 @@ impl<H: Hasher> TryFrom<EncodedNode> for Node<H> {
         match encoded {
             EncodedNode::Value(value) => Ok(Self::Value(Value::Cached(value))),
             EncodedNode::Inner(left, right) => {
-                let left_hash = decode_hash::<H>(&left).ok_or(TreeError::NodeDeserializationFailed)?;
-                let right_hash = decode_hash::<H>(&right).ok_or(TreeError::NodeDeserializationFailed)?;
+                let left_hash =
+                    decode_hash::<H>(&left)?;
+                let right_hash =
+                    decode_hash::<H>(&right)?;
                 Ok(Self::Inner(
                     NodeHash::Hash(left_hash),
                     NodeHash::Hash(right_hash),
@@ -119,7 +156,7 @@ impl<H: Hasher> Node<H> {
     pub fn get_child(&self, bit: u8) -> Result<&NodeHash<H>, TreeError> {
         if bit == 0 {
             self.get_left_child()
-        } else if bit == 1{
+        } else if bit == 1 {
             self.get_right_child()
         } else {
             Err(TreeError::NodeIndexOutOfBounds)
@@ -249,11 +286,11 @@ impl EncodedNode {
     }
 }
 
-pub fn decode_hash<H: Hasher>(data: &[u8]) -> Option<H::Out> {
+pub fn decode_hash<H: Hasher>(data: &[u8]) -> Result<H::Out, TreeError> {
     if data.len() != H::LENGTH {
-        return None;
+        return Err(TreeError::DecodeHashFailed);
     }
     let mut hash = H::Out::default();
     hash.as_mut().copy_from_slice(data);
-    Some(hash)
+    Ok(hash)
 }

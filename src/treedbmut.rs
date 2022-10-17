@@ -1,15 +1,11 @@
-use std::{collections::HashMap, thread::current};
-
 use crate::{
-    indices, node::decode_hash, node::EncodedNode, node::NodeHash, node::Value,
-    DBValue, Node, TreeError, TreeMut, TreeRecorder,
+    indices, node::decode_hash, node::EncodedNode, node::NodeHash, node::Value, DBValue, Node,
+    TreeError, TreeMut, TreeRecorder, rstd::HashMap
 };
 use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
-use serde::Serialize;
 
 /// Stored item representation.
-pub enum Stored<H: Hasher>
-{
+pub enum Stored<H: Hasher> {
     /// Node hash.
     New(Node<H>),
     /// Value.
@@ -102,9 +98,11 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
             .db
             .get(key, EMPTY_PREFIX)
             .ok_or(TreeError::DataNotFound)?;
-        let node: EncodedNode = bincode::deserialize(&data).unwrap();
-        let node: Node<H> = node.try_into()?;
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(node.clone()));
+        // let node: EncodedNode = bincode::deserialize(&data).unwrap();
+        let node: Node<H> = data.try_into()?;
+        self.recorder
+            .as_ref()
+            .map(|r| r.borrow_mut().record(node.clone()));
 
         Ok(node)
     }
@@ -130,22 +128,18 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         value: DBValue,
     ) -> Result<Node<H>, TreeError> {
         if key.len() == 1 {
-            let old_leaf = current_node
-                .get_child(key[0])?;
+            let old_leaf = current_node.get_child(key[0])?;
             let old_value = self.lookup(&old_leaf.get_hash())?;
             let new_node = Node::Value(Value::New(value));
-            current_node
-                .set_child_hash(key[0], NodeHash::InMemory(new_node.hash()))?;
+            current_node.set_child_hash(key[0], NodeHash::InMemory(new_node.hash()))?;
             self.storage.insert(new_node.hash(), Stored::New(new_node));
             Ok(old_value)
         } else {
-            let child_key = current_node
-                .get_child(key[0])?;
+            let child_key = current_node.get_child(key[0])?;
             // TODO should lookup storage first
             let mut child_node = self.lookup(child_key.get_hash())?;
             let old_value = self.insert_at(&mut child_node, &key[1..], value)?;
-            current_node
-                .set_child_hash(key[0], NodeHash::InMemory(child_node.hash()))?;
+            current_node.set_child_hash(key[0], NodeHash::InMemory(child_node.hash()))?;
             self.storage
                 .insert(child_node.hash(), Stored::New(child_node));
             Ok(old_value)
@@ -160,11 +154,11 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
 
         match self.storage.remove(&root_hash) {
             Some(Stored::New(node)) => {
-                let encoded_node: EncodedNode = node.clone().into();
+                let encoded_node: Vec<u8> = node.clone().into();
                 self.db.emplace(
                     root_hash,
                     EMPTY_PREFIX,
-                    bincode::serialize(&encoded_node).unwrap(),
+                    encoded_node,
                 );
                 self.commit_child(node);
                 *self.root = root_hash;
@@ -189,13 +183,16 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
                         NodeHash::InMemory(hash) => match self.storage.remove(&hash) {
                             Some(Stored::Cached(_)) => (),
                             Some(Stored::New(node)) => {
-                                let encoded_node: EncodedNode = node.clone().into();
+                                let encoded_node: Vec<u8> = node.clone().into();
                                 self.db.emplace(
                                     hash,
                                     EMPTY_PREFIX,
-                                    bincode::serialize(&encoded_node).unwrap(),
+                                    encoded_node,
                                 );
-                                self.commit_child(node)
+                                
+                                if let &Node::Inner(_, _) = &node {
+                                    self.commit_child(node)
+                                }
                             }
                             None => (),
                         },
@@ -204,8 +201,10 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
             }
             Node::Value(value) => match value {
                 Value::Cached(_) => (),
-                Value::New(value) => {
+                Value::New(mut value) => {
                     let hash = H::hash(&value);
+                    let mut encoded_node: Vec<u8> = vec![0];
+                    encoded_node.append(&mut value);
                     self.db.emplace(hash, EMPTY_PREFIX, value);
                 }
             },
@@ -240,12 +239,10 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let data = self
-            .get(&key[..key.len() - 1])
-            .map(|node| {
-                node.get_child(key[key.len() - 1])
-                    .map(|x| x.get_hash().to_owned())
-            })?;
+        let data = self.get(&key[..key.len() - 1]).map(|node| {
+            node.get_child(key[key.len() - 1])
+                .map(|x| x.get_hash().to_owned())
+        })?;
 
         data
     }
@@ -308,8 +305,6 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
 
         self.root_handle = NodeHash::InMemory(root_data.hash());
 
-        old_value
-            .get_value()
-            .map(|x| x.get().clone())
+        old_value.get_value().map(|x| x.get().clone())
     }
 }

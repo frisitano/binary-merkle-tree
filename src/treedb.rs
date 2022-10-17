@@ -1,6 +1,6 @@
 use crate::{
-    decode_hash, indices, DBValue, EncodedNode, HashDBRef, Hasher, Tree, TreeError, TreeRecorder,
-    EMPTY_PREFIX, Node
+    decode_hash, indices, DBValue, EncodedNode, HashDBRef, Hasher, Node, Tree, TreeError,
+    TreeRecorder, EMPTY_PREFIX,
 };
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
@@ -91,7 +91,9 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
             .ok_or(TreeError::DataNotFound)?;
         let node: EncodedNode = bincode::deserialize(&data).unwrap();
         let node: Node<H> = node.try_into()?;
-        self.recorder.as_ref().map(|r| r.borrow_mut().record(node.clone()));
+        self.recorder
+            .as_ref()
+            .map(|r| r.borrow_mut().record(node.clone()));
         Ok(node)
     }
 
@@ -136,12 +138,10 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             return Err(TreeError::IndexOutOfBounds);
         }
 
-        let data = self
-            .get(&key[..key.len() - 1])
-            .map(|node| {
-                node.get_child(key[key.len() - 1])
-                    .map(|x| x.get_hash().to_owned())
-            })?;
+        let data = self.get(&key[..key.len() - 1]).map(|node| {
+            node.get_child(key[key.len() - 1])
+                .map(|x| x.get_hash().to_owned())
+        })?;
 
         data
     }
