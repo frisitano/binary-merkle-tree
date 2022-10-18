@@ -1,4 +1,4 @@
-use crate::{TreeRecorder, Node, Hasher, rstd::convert::From, StorageProof, EncodedNode};
+use crate::{TreeRecorder, Node, Hasher, StorageProof};
 
 /// Record node accesses.
 pub struct Recorder<H: Hasher> {
@@ -27,8 +27,6 @@ impl<H: Hasher> Recorder<H> {
         StorageProof::new(encoded_nodes)
     }
 }
-
-// impl<H: Hasher> From<Recorder<H>> for 
 
 
 impl<H: Hasher> TreeRecorder<H> for Recorder<H> {

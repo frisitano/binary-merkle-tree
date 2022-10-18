@@ -27,7 +27,7 @@ use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
 use std::clone::Clone;
 
 // pub use proof::generate_proof;
-pub use node::{decode_hash, EncodedNode, Node, Value, NodeHash};
+pub use node::{decode_hash, Node, Value, NodeHash};
 pub use recorder::Recorder;
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};

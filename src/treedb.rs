@@ -64,38 +64,20 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         self.db
     }
 
-    // pub fn lookup(&self, key: &H::Out) -> Result<Node, TreeError> {
-    //     let data = self
-    //         .db
-    //         .get(key, EMPTY_PREFIX)
-    //         .ok_or(TreeError::DataNotFound)?;
-    //     let data: EncodedNode = bincode::deserialize(&data).unwrap();
-    //     let node: Node = data.into();
-    //     Ok(data)
-    // }
-
-    // pub fn get(&self, key: &[u8]) -> Result<EncodedNode, TreeError> {
-    //     let mut current_node = self.lookup(self.root)?;
-
-    //     for &bit in key {
-    //         let key = current_node.get_inner_node_hash::<H>(bit)?;
-    //         current_node = self.lookup(&key)?;
-    //     }
-
-    //     Ok(current_node)
-    // }
     pub fn lookup(&self, key: &H::Out) -> Result<Node<H>, TreeError> {
         let data = self
             .db
             .get(key, EMPTY_PREFIX)
             .ok_or(TreeError::DataNotFound)?;
-        let node: EncodedNode = bincode::deserialize(&data).unwrap();
-        let node: Node<H> = node.try_into()?;
+
+        let node: Node<H> = data.try_into()?;
         self.recorder
             .as_ref()
             .map(|r| r.borrow_mut().record(node.clone()));
+
         Ok(node)
     }
+
 
     pub fn get(&self, key: &[u8]) -> Result<Node<H>, TreeError> {
         // if index < 1 || (1 << self.depth) * 3 <= index {
@@ -154,38 +136,27 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         let mut proof = Vec::new();
         proof.push((1, self.root.as_ref().to_vec()));
 
-        let root_data = self
-            .db
-            .get(self.root, EMPTY_PREFIX)
-            .ok_or(TreeError::DataNotFound)?;
 
-        let mut current_node: EncodedNode;
-        current_node = bincode::deserialize(&root_data).unwrap();
+        let mut current_node = self.lookup(self.root)?;
 
         for (i, &bit) in key.iter().enumerate() {
             let index = indices::compute_index(&key[..i + 1]);
             let left_index = if index % 2 == 0 { index } else { index ^ 1 };
 
-            if let EncodedNode::Inner(left, right) = current_node {
-                let hash_left = decode_hash::<H>(&left).unwrap();
-                let hash_right = decode_hash::<H>(&right).unwrap();
-                let key = if bit == 0 { hash_left } else { hash_right };
-                let data = self
-                    .db
-                    .get(&key, EMPTY_PREFIX)
-                    .ok_or(TreeError::DataNotFound)?;
-                current_node = bincode::deserialize(&data).unwrap();
+            if let Node::Inner(left, right) = current_node {
+                let key = if bit == 0 { left.get_hash() } else { right.get_hash() };
+                current_node = self.lookup(key)?;
 
                 proof.extend_from_slice(&[
-                    (left_index, hash_left.as_ref().to_vec()),
-                    (left_index + 1, hash_right.as_ref().to_vec()),
+                    (left_index, left.get_hash().as_ref().to_vec()),
+                    (left_index + 1, right.get_hash().as_ref().to_vec()),
                 ]);
             } else {
                 return Err(TreeError::UnexpectedNodeType);
             }
         }
 
-        proof.push((0, current_node.get_value()?));
+        proof.push((0, current_node.get_value()?.get().clone()));
 
         Ok(proof)
     }

@@ -135,12 +135,12 @@ fn test_get_value() {
         Vec::from([1, 1, 0]),
         Vec::from([1, 1, 1]),
     ]);
-    // for (value, key) in test_values.iter().zip(&keys) {
-    //     assert_eq!(
-    //         u32::from_le_bytes(tree_db.get_value(key).unwrap().try_into().unwrap()),
-    //         *value
-    //     )
-    // }
+    for (value, key) in test_values.iter().zip(&keys) {
+        assert_eq!(
+            u32::from_le_bytes(tree_db.get_value(key).unwrap().try_into().unwrap()),
+            *value
+        )
+    }
 
     let tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
     for (value, key) in test_values.iter().zip(keys) {
@@ -169,10 +169,11 @@ fn test_get_leaf() {
         Vec::from([1, 1, 0]),
         Vec::from([1, 1, 1]),
     ]);
-    // for (value, key) in test_values.iter().zip(&keys) {
-    //     let leaf = Sha3::hash(&value.to_le_bytes());
-    //     assert_eq!(tree_db.get_leaf(key).unwrap(), leaf)
-    // }
+
+    for (value, key) in test_values.iter().zip(&keys) {
+        let leaf = Sha3::hash(&value.to_le_bytes());
+        assert_eq!(tree_db.get_leaf(key).unwrap(), leaf)
+    }
 
     let tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
     for (value, key) in test_values.iter().zip(keys) {
