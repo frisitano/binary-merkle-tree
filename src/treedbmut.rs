@@ -1,25 +1,9 @@
 use crate::{
-    indices, node::decode_hash, node::EncodedNode, node::NodeHash, node::Value, DBValue, Node,
+    indices, node::NodeHash, node::Value, DBValue, Node,
     TreeError, TreeMut, TreeRecorder, rstd::HashMap
 };
 use hash_db::{HashDB, HashDBRef, Hasher, EMPTY_PREFIX};
 
-/// Stored item representation.
-pub enum Stored<H: Hasher> {
-    /// Node hash.
-    New(Node<H>),
-    /// Value.
-    Cached(Node<H>),
-}
-
-impl<H: Hasher> Stored<H> {
-    pub fn get_node(&self) -> &Node<H> {
-        match self {
-            Stored::New(node) => node,
-            Stored::Cached(node) => node,
-        }
-    }
-}
 
 pub struct TreeDBMutBuilder<'db, H: Hasher> {
     db: &'db mut dyn HashDB<H, DBValue>,
@@ -72,7 +56,7 @@ impl<'db, H: Hasher> TreeDBMutBuilder<'db, H> {
 /// Querying the root or dropping the `TreeDBMut` will `commit()` stored changes.
 pub struct TreeDBMut<'a, H: Hasher> {
     db: &'a mut dyn HashDB<H, DBValue>,
-    storage: HashMap<H::Out, Stored<H>>,
+    storage: HashMap<H::Out, Node<H>>,
     root: &'a mut H::Out,
     root_handle: NodeHash<H>,
     depth: usize,
@@ -89,9 +73,8 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
     }
 
     pub fn lookup(&self, key: &H::Out) -> Result<Node<H>, TreeError> {
-        if let Some(value) = self.storage.get(key) {
-            let node = (*value.get_node()).clone();
-            return Ok(node);
+        if let Some(node) = self.storage.get(key) {
+            return Ok(node.clone());
         }
 
         let data = self
@@ -132,16 +115,15 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
             let old_value = self.lookup(&old_leaf.get_hash())?;
             let new_node = Node::Value(Value::New(value));
             current_node.set_child_hash(key[0], NodeHash::InMemory(new_node.hash()))?;
-            self.storage.insert(new_node.hash(), Stored::New(new_node));
+            self.storage.insert(new_node.hash(), new_node);
             Ok(old_value)
         } else {
             let child_key = current_node.get_child(key[0])?;
-            // TODO should lookup storage first
             let mut child_node = self.lookup(child_key.get_hash())?;
             let old_value = self.insert_at(&mut child_node, &key[1..], value)?;
             current_node.set_child_hash(key[0], NodeHash::InMemory(child_node.hash()))?;
             self.storage
-                .insert(child_node.hash(), Stored::New(child_node));
+                .insert(child_node.hash(), child_node);
             Ok(old_value)
         }
     }
@@ -153,7 +135,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
         };
 
         match self.storage.remove(&root_hash) {
-            Some(Stored::New(node)) => {
+            Some(node) => {
                 let encoded_node: Vec<u8> = node.clone().into();
                 self.db.emplace(
                     root_hash,
@@ -163,12 +145,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
                 self.commit_child(node);
                 *self.root = root_hash;
                 self.root_handle = NodeHash::Hash(*self.root)
-            }
-            Some(Stored::Cached(node)) => {
-                self.storage.insert(root_hash, Stored::Cached(node));
-                *self.root = root_hash;
-                self.root_handle = NodeHash::InMemory(root_hash);
-            }
+            },
             None => return,
         }
     }
@@ -181,8 +158,7 @@ impl<'a, H: Hasher> TreeDBMut<'a, H> {
                     match hash {
                         NodeHash::Hash(_) => (),
                         NodeHash::InMemory(hash) => match self.storage.remove(&hash) {
-                            Some(Stored::Cached(_)) => (),
-                            Some(Stored::New(node)) => {
+                            Some(node) => {
                                 let encoded_node: Vec<u8> = node.clone().into();
                                 self.db.emplace(
                                     hash,
@@ -290,7 +266,7 @@ impl<'a, H: Hasher> TreeMut<H> for TreeDBMut<'a, H> {
         let old_value = self.insert_at(&mut root_data, key, value)?;
 
         self.storage
-            .insert(root_data.hash(), Stored::New(root_data.clone()));
+            .insert(root_data.hash(), root_data.clone());
 
         self.root_handle = NodeHash::InMemory(root_data.hash());
 

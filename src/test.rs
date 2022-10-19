@@ -1,6 +1,6 @@
 use crate::{
-    indices::authentication_indices, node::EncodedNode, DBValue, Hasher, Recorder, Tree,
-    TreeDBBuilder, TreeDBMutBuilder, TreeMut, EMPTY_PREFIX, Node, Value, NodeHash
+    indices::authentication_indices, DBValue, Hasher, Recorder, Tree,
+    TreeDBBuilder, TreeDBMutBuilder, TreeMut, EMPTY_PREFIX, Node, Value, NodeHash,
 };
 
 use std::marker::PhantomData;
@@ -348,88 +348,30 @@ fn test_commit_tree_db_mut() {
             .unwrap().try_into().unwrap();
     assert_eq!(retrieved_node.get_value().unwrap().get(), &new_value_bytes);
 }
-//
-// #[test]
-// fn test_recorder() {
-//     let mut recorder = Recorder::new();
-//     let (mut memory_db, root, depth) = build_db_mock();
-//     let tree_db_builder =
-//         TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth).with_recorder(&mut recorder);
-//     let tree_db = tree_db_builder.build();
 
-//     let _ = tree_db.get_value(&[0, 0, 0]);
-//     let _ = tree_db.get_leaf(&[0, 1, 0]);
-//     let _ = tree_db.get_proof(&[0, 1, 1]);
-//     // let _ = tree_db.get(3);
+#[test]
+fn test_recorder() {
+    let mut recorder = Recorder::new();
+    let (mut memory_db, root, depth) = build_db_mock();
+    let tree_db_builder =
+        TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth).with_recorder(&mut recorder);
+    let tree_db = tree_db_builder.build();
 
-//     let recorded_nodes = recorder.drain();
-//     println!("{:#?}", recorded_nodes);
-//     // let expected_nodes = vec![13, 15, 17];
-//     // assert_eq!(recorded_nodes, expected_nodes);
-// }
-//
-// #[test]
-// fn test_generate_proof_compact() {
-//     let (memory_db, root, depth) = build_db_mock();
-//     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&memory_db, &root, depth);
-//     let tree_db = tree_db_builder.build();
-//
-//     let mut proof = generate_proof(&memory_db, &[9, 10, 22], root, depth, true).unwrap();
-//     proof.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     let expected_indices = vec![8, 9, 10, 11, 22, 15, 6];
-//     let mut expected: Vec<(usize, DBValue)> = expected_indices
-//         .into_iter()
-//         .map(|index| (index, tree_db.get(index).unwrap()))
-//         .collect();
-//     expected.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     assert_eq!(proof, expected);
-// }
-//
-// #[test]
-// fn test_generate_proof_not_compact() {
-//     let (memory_db, root, depth) = build_db_mock();
-//     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&memory_db, &root, depth);
-//     let tree_db = tree_db_builder.build();
-//
-//     let mut proof = generate_proof(&memory_db, &[9, 10, 22], root, depth, false).unwrap();
-//     proof.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     let expected_indices = vec![22, 14, 15, 7, 6, 3, 1, 10, 11, 5, 2, 9, 8, 4];
-//     let mut expected: Vec<(usize, DBValue)> = expected_indices
-//         .into_iter()
-//         .map(|index| (index, tree_db.get(index).unwrap()))
-//         .collect();
-//     expected.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     assert_eq!(proof, expected);
-// }
-//
-// #[test]
-// fn test_generate_proof_from_recorder() {
-//     let mut recorder = Recorder::new();
-//     let (mut memory_db, root, depth) = build_db_mock();
-//     let tree_db_builder =
-//         TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth).with_recorder(&mut recorder);
-//     let tree_db = tree_db_builder.build();
-//
-//     let expected_indices = vec![22, 14, 15, 7, 6, 3, 1, 10, 11, 5, 2, 9, 8, 4];
-//     let mut expected: Vec<(usize, DBValue)> = expected_indices
-//         .into_iter()
-//         .map(|index| (index, tree_db.get(index).unwrap()))
-//         .collect();
-//
-//     let _ = tree_db.get_value(6);
-//     let _ = tree_db.get_leaf(1);
-//     let _ = tree_db.get_proof(2);
-//
-//     let recorded_nodes = recorder.drain();
-//
-//     let mut proof = generate_proof(&memory_db, &recorded_nodes, root, depth, false).unwrap();
-//     proof.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     expected.sort_by(|x, y| x.0.cmp(&y.0));
-//
-//     assert_eq!(proof, expected);
-// }
+    let expected_value = tree_db.get_value(&[0, 0, 0]).unwrap();
+    let expected_leaf = tree_db.get_leaf(&[0, 1, 0]).unwrap();
+    let expected_proof = tree_db.get_proof(&[0, 1, 1]).unwrap();
+    
+
+    let storage_proof = recorder.drain_storage_proof();
+    println!("{:?}", storage_proof);
+    let proof_db: MemoryDB<Sha3, _, Vec<u8>> = storage_proof.into_memory_db();
+    let proof_tree = TreeDBBuilder::<Sha3>::new(&proof_db, &root, depth).build();
+    
+    let value = proof_tree.get_value(&[0, 0, 0]).unwrap();
+    let leaf = proof_tree.get_leaf(&[0, 1, 0]).unwrap();
+    let proof = proof_tree.get_proof(&[0, 1, 1]).unwrap();
+
+    assert_eq!(value, expected_value);
+    assert_eq!(leaf, expected_leaf);
+    assert_eq!(proof, expected_proof);
+}

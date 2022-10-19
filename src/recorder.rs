@@ -20,10 +20,7 @@ impl<H: Hasher> Recorder<H> {
     }
 
     pub fn drain_storage_proof(self) -> StorageProof {
-        let encoded_nodes: Vec<Vec<u8>> = self.nodes.into_iter().map(|node| {
-            let encoded_node: EncodedNode = node.into();
-            bincode::serialize(&encoded_node).unwrap()
-        }).collect();
+        let encoded_nodes: Vec<Vec<u8>> = self.nodes.into_iter().map(|node| node.into() ).collect();
         StorageProof::new(encoded_nodes)
     }
 }
