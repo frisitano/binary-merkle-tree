@@ -2,19 +2,23 @@
 
 #[cfg(feature = "std")]
 mod rstd {
-    pub use std::{convert, collections::{HashMap, BTreeSet}, mem, vec::Vec};
+    pub use std::{
+        collections::{BTreeSet, HashMap},
+        convert, mem,
+        vec::Vec,
+    };
 }
 
 #[cfg(not(feature = "std"))]
 mod rstd {
     pub use alloc::collections::Vec;
+    pub use core::collections::{BTreeSet, HashMap};
     pub use core::mem;
-    pub use core::collections::{HashMap, BTreeSet};
 }
 
 mod indices;
-mod proof;
 mod node;
+mod proof;
 mod recorder;
 mod treedb;
 mod treedbmut;
@@ -27,11 +31,11 @@ use hash_db::{HashDBRef, Hasher, EMPTY_PREFIX};
 use std::clone::Clone;
 
 // pub use proof::generate_proof;
-pub use node::{decode_hash, Node, Value, NodeHash};
+pub use node::{decode_hash, Node, NodeHash, Value};
+pub use proof::StorageProof;
 pub use recorder::Recorder;
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
-pub use proof::StorageProof;
 
 /// Database value
 pub type DBValue = Vec<u8>;
@@ -44,7 +48,7 @@ pub enum TreeError {
     UnexpectedNodeType,
     NodeDeserializationFailed,
     NodeIndexOutOfBounds,
-    DecodeHashFailed
+    DecodeHashFailed,
 }
 
 /// An index-value datastore implemented as a database-backed binary merkle tree

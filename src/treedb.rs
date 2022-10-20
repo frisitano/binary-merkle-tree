@@ -1,6 +1,5 @@
 use crate::{
-    indices, DBValue, HashDBRef, Hasher, Node, Tree, TreeError,
-    TreeRecorder, EMPTY_PREFIX,
+    indices, DBValue, HashDBRef, Hasher, Node, Tree, TreeError, TreeRecorder, EMPTY_PREFIX,
 };
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
@@ -37,12 +36,12 @@ impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
     }
 
     pub fn build(self) -> TreeDB<'db, H> {
-        TreeDB {
-            db: self.db,
-            root: self.root,
-            depth: self.depth,
-            recorder: self.recorder.map(core::cell::RefCell::new),
-        }
+        TreeDB::new(
+            self.db,
+            self.root,
+            self.depth,
+            self.recorder.map(core::cell::RefCell::new),
+        )
     }
 }
 
@@ -56,9 +55,29 @@ pub struct TreeDB<'a, H: Hasher> {
     root: &'a H::Out,
     depth: usize,
     recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder<H>>>,
+    null_hashes: Vec<H::Out>,
 }
 
 impl<'a, H: Hasher> TreeDB<'a, H> {
+    pub fn new(
+        db: &'a dyn HashDBRef<H, DBValue>,
+        root: &'a H::Out,
+        depth: usize,
+        recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder<H>>>,
+    ) -> TreeDB<'a, H> {
+        let null_hashes: Vec<H::Out> = (0..64)
+            .scan([], |null_hash, _| Some(H::hash(null_hash)))
+            .collect();
+
+        TreeDB {
+            db,
+            root,
+            depth,
+            recorder,
+            null_hashes,
+        }
+    }
+
     /// Get the backing database.
     pub fn db(&self) -> &dyn HashDBRef<H, DBValue> {
         self.db
@@ -77,7 +96,6 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
 
         Ok(node)
     }
-
 
     pub fn get(&self, key: &[u8]) -> Result<Node<H>, TreeError> {
         // if index < 1 || (1 << self.depth) * 3 <= index {
@@ -136,7 +154,6 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         let mut proof = Vec::new();
         proof.push((1, self.root.as_ref().to_vec()));
 
-
         let mut current_node = self.lookup(self.root)?;
 
         for (i, &bit) in key.iter().enumerate() {
@@ -144,7 +161,11 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
             let left_index = if index % 2 == 0 { index } else { index ^ 1 };
 
             if let Node::Inner(left, right) = current_node {
-                let key = if bit == 0 { left.get_hash() } else { right.get_hash() };
+                let key = if bit == 0 {
+                    left.get_hash()
+                } else {
+                    right.get_hash()
+                };
                 current_node = self.lookup(key)?;
 
                 proof.extend_from_slice(&[

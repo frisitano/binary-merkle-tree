@@ -1,6 +1,6 @@
 use crate::{
-    indices::authentication_indices, DBValue, Hasher, Recorder, Tree,
-    TreeDBBuilder, TreeDBMutBuilder, TreeMut, EMPTY_PREFIX, Node, Value, NodeHash,
+    DBValue, Hasher, Node, NodeHash, Recorder, Tree, TreeDBBuilder, TreeDBMutBuilder, TreeMut,
+    Value, EMPTY_PREFIX,
 };
 
 use std::marker::PhantomData;
@@ -66,10 +66,7 @@ fn build_data() -> (
     for i in (1..n).rev() {
         let left = &leaf_pairs[i][0];
         let right = &leaf_pairs[i][1];
-        nodes[i] = Node::Inner(
-            NodeHash::Hash(left.hash()),
-            NodeHash::Hash(right.hash()),
-        );
+        nodes[i] = Node::Inner(NodeHash::Hash(left.hash()), NodeHash::Hash(right.hash()));
     }
 
     let root = nodes[1].hash();
@@ -88,34 +85,20 @@ fn build_db_mock() -> (
     for node in values.into_iter() {
         let hash = node.hash();
         let encoded_node: Vec<u8> = node.into();
-        memory_db.as_hash_db_mut().emplace(
-            hash,
-            EMPTY_PREFIX,
-            encoded_node,
-        );
+        memory_db
+            .as_hash_db_mut()
+            .emplace(hash, EMPTY_PREFIX, encoded_node);
     }
 
     for index in 1..nodes.len() {
         let hash = nodes[index].hash();
         let encoded_node: Vec<u8> = nodes[index].clone().into();
-        memory_db.as_hash_db_mut().emplace(
-            hash,
-            EMPTY_PREFIX,
-            encoded_node,
-        );
+        memory_db
+            .as_hash_db_mut()
+            .emplace(hash, EMPTY_PREFIX, encoded_node);
     }
 
     (memory_db, root, depth)
-}
-
-#[test]
-fn authentication_indices_test() {
-    assert_eq!(authentication_indices(&[9, 11], true, 3), [8, 10, 3]);
-    assert_eq!(authentication_indices(&[10, 15], true, 3), [11, 14, 4, 6]);
-    assert_eq!(
-        authentication_indices(&[9, 11], false, 3),
-        [8, 10, 4, 5, 2, 3, 1]
-    );
 }
 
 #[test]
@@ -343,9 +326,11 @@ fn test_commit_tree_db_mut() {
     ];
     assert_eq!(tree_db_mut.root().to_vec(), expected_root);
     let retrieved_node: Node<Sha3> = memory_db
-            .as_hash_db()
-            .get(&Sha3::hash(&new_value_bytes), EMPTY_PREFIX)
-            .unwrap().try_into().unwrap();
+        .as_hash_db()
+        .get(&Sha3::hash(&new_value_bytes), EMPTY_PREFIX)
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert_eq!(retrieved_node.get_value().unwrap().get(), &new_value_bytes);
 }
 
@@ -360,13 +345,12 @@ fn test_recorder() {
     let expected_value = tree_db.get_value(&[0, 0, 0]).unwrap();
     let expected_leaf = tree_db.get_leaf(&[0, 1, 0]).unwrap();
     let expected_proof = tree_db.get_proof(&[0, 1, 1]).unwrap();
-    
 
     let storage_proof = recorder.drain_storage_proof();
     println!("{:?}", storage_proof);
     let proof_db: MemoryDB<Sha3, _, Vec<u8>> = storage_proof.into_memory_db();
     let proof_tree = TreeDBBuilder::<Sha3>::new(&proof_db, &root, depth).build();
-    
+
     let value = proof_tree.get_value(&[0, 0, 0]).unwrap();
     let leaf = proof_tree.get_leaf(&[0, 1, 0]).unwrap();
     let proof = proof_tree.get_proof(&[0, 1, 1]).unwrap();
@@ -374,4 +358,24 @@ fn test_recorder() {
     assert_eq!(value, expected_value);
     assert_eq!(leaf, expected_leaf);
     assert_eq!(proof, expected_proof);
+}
+
+#[test]
+fn test_null_hash() {
+    let null_hashes: Vec<<Sha3 as Hasher>::Out> = (0..64)
+        .scan(Sha3::hash(&[]), |null_hash, _| {
+            let value = *null_hash;
+            *null_hash = Sha3::hash(&[null_hash.as_ref(), null_hash.as_ref()].concat());
+            Some(value)
+        })
+        .collect();
+    let leaf = Sha3::hash(&[]);
+    let concatenated = [leaf.as_ref(), leaf.as_ref()].concat();
+    println!("leaf {:?}", leaf);
+    println!("concatenated {:?}", concatenated);
+    let layer_2 = Sha3::hash(&concatenated);
+    let layer_3 = Sha3::hash(&[layer_2.as_ref(), layer_2.as_ref()].concat());
+    assert_eq!(null_hashes[0], leaf);
+    assert_eq!(null_hashes[1], layer_2);
+    assert_eq!(null_hashes[2], layer_3);
 }

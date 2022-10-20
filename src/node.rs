@@ -67,11 +67,14 @@ impl<H: Hasher> TryFrom<Vec<u8>> for Node<H> {
         match value.get(0) {
             Some(0u8) => Ok(Node::Value(Value::Cached(value[1..].to_vec()))),
             Some(1u8) => {
-                let left_hash = decode_hash::<H>(&value[1..(H::LENGTH+1)])?;
-                let right_hash = decode_hash::<H>(&value[(H::LENGTH+1)..])?;
-                Ok(Node::Inner(NodeHash::Hash(left_hash), NodeHash::Hash(right_hash)))
-            },
-            _ => Err(TreeError::NodeDeserializationFailed)
+                let left_hash = decode_hash::<H>(&value[1..(H::LENGTH + 1)])?;
+                let right_hash = decode_hash::<H>(&value[(H::LENGTH + 1)..])?;
+                Ok(Node::Inner(
+                    NodeHash::Hash(left_hash),
+                    NodeHash::Hash(right_hash),
+                ))
+            }
+            _ => Err(TreeError::NodeDeserializationFailed),
         }
     }
 }
