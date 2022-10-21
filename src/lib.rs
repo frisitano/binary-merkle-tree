@@ -16,6 +16,7 @@ mod rstd {
     pub use core::mem;
 }
 
+mod key;
 mod indices;
 mod node;
 mod proof;
