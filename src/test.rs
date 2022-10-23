@@ -1,6 +1,6 @@
 use crate::{
     DBValue, Hasher, Node, NodeHash, Recorder, Tree, TreeDBBuilder, TreeDBMutBuilder, TreeMut,
-    Value, EMPTY_PREFIX,
+    Value, EMPTY_PREFIX, Key, KeyIter
 };
 
 use std::marker::PhantomData;
@@ -378,4 +378,15 @@ fn test_null_hash() {
     assert_eq!(null_hashes[0], leaf);
     assert_eq!(null_hashes[1], layer_2);
     assert_eq!(null_hashes[2], layer_3);
+}
+
+#[test]
+fn test_key_iter() {
+    let hash: [u8; 2] = [17, 24];
+    // 00010001 00011000
+    let expected = [false, false, false, true, false, false, false, true, false, false, false, true, true, false, false, false];
+    let key = Key::new(hash);
+    for (bit, expected) in key.iter().zip(expected.iter()) {
+        assert_eq!(&bit, expected);
+    }
 }

@@ -37,6 +37,7 @@ pub use proof::StorageProof;
 pub use recorder::Recorder;
 pub use treedb::{TreeDB, TreeDBBuilder};
 pub use treedbmut::{TreeDBMut, TreeDBMutBuilder};
+pub use key::{Key, KeyIter};
 
 /// Database value
 pub type DBValue = Vec<u8>;
