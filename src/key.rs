@@ -9,7 +9,7 @@ impl<const N: usize> Key<N> {
     }
 
     pub const fn zero() -> Self {
-        Self ([0u8; N])
+        Self([0u8; N])
     }
 
     pub fn is_zero(&self) -> bool {
@@ -28,13 +28,16 @@ impl<const N: usize> Key<N> {
     }
 
     pub fn iter(&self) -> KeyIter<'_, N> {
-        KeyIter { key: self, element: 0 }
+        KeyIter {
+            key: self,
+            element: 0,
+        }
     }
 }
 
-pub struct KeyIter<'a, const N: usize>{
+pub struct KeyIter<'a, const N: usize> {
     key: &'a Key<N>,
-    element: u8
+    element: u8,
 }
 
 impl<'a, const N: usize> Iterator for KeyIter<'a, N> {
@@ -42,7 +45,7 @@ impl<'a, const N: usize> Iterator for KeyIter<'a, N> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.element >= N as u8 * 8 {
-            return None
+            return None;
         }
 
         let result = self.key.get_bit(&self.element);

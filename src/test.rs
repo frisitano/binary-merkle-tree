@@ -1,6 +1,6 @@
 use crate::{
-    DBValue, Hasher, Node, NodeHash, Recorder, Tree, TreeDBBuilder, TreeDBMutBuilder, TreeMut,
-    Value, EMPTY_PREFIX, Key, KeyIter
+    compute_null_hashes, DBValue, Hasher, Key, Node, NodeHash, Recorder, Tree, TreeDBBuilder,
+    TreeDBMutBuilder, TreeMut, Value, EMPTY_PREFIX,
 };
 
 use std::marker::PhantomData;
@@ -34,6 +34,19 @@ impl<H: Hasher> KeyFunction<H> for NoopKey<H> {
     fn key(hash: &H::Out, _prefix: Prefix) -> Vec<u8> {
         hash.as_ref().to_vec()
     }
+}
+
+fn test_keys() -> Vec<Vec<u8>> {
+    Vec::from([
+        Vec::from([0, 0, 0]),
+        Vec::from([0, 0, 1]),
+        Vec::from([0, 1, 0]),
+        Vec::from([0, 1, 1]),
+        Vec::from([1, 0, 0]),
+        Vec::from([1, 0, 1]),
+        Vec::from([1, 1, 0]),
+        Vec::from([1, 1, 1]),
+    ])
 }
 
 fn test_values() -> Vec<u32> {
@@ -108,16 +121,7 @@ fn test_get_value() {
 
     let tree_db_builder = TreeDBBuilder::<Sha3>::new(&mut memory_db, &root, depth);
     let tree_db = tree_db_builder.build();
-    let keys: Vec<Vec<u8>> = Vec::from([
-        Vec::from([0, 0, 0]),
-        Vec::from([0, 0, 1]),
-        Vec::from([0, 1, 0]),
-        Vec::from([0, 1, 1]),
-        Vec::from([1, 0, 0]),
-        Vec::from([1, 0, 1]),
-        Vec::from([1, 1, 0]),
-        Vec::from([1, 1, 1]),
-    ]);
+    let keys: Vec<Vec<u8>> = test_keys();
     for (value, key) in test_values.iter().zip(&keys) {
         assert_eq!(
             u32::from_le_bytes(tree_db.get_value(key).unwrap().try_into().unwrap()),
@@ -347,7 +351,6 @@ fn test_recorder() {
     let expected_proof = tree_db.get_proof(&[0, 1, 1]).unwrap();
 
     let storage_proof = recorder.drain_storage_proof();
-    println!("{:?}", storage_proof);
     let proof_db: MemoryDB<Sha3, _, Vec<u8>> = storage_proof.into_memory_db();
     let proof_tree = TreeDBBuilder::<Sha3>::new(&proof_db, &root, depth).build();
 
@@ -362,31 +365,59 @@ fn test_recorder() {
 
 #[test]
 fn test_null_hash() {
-    let null_hashes: Vec<<Sha3 as Hasher>::Out> = (0..64)
-        .scan(Sha3::hash(&[]), |null_hash, _| {
-            let value = *null_hash;
-            *null_hash = Sha3::hash(&[null_hash.as_ref(), null_hash.as_ref()].concat());
-            Some(value)
-        })
-        .collect();
+    let null_hashes = compute_null_hashes::<Sha3>(64);
     let leaf = Sha3::hash(&[]);
     let concatenated = [leaf.as_ref(), leaf.as_ref()].concat();
-    println!("leaf {:?}", leaf);
-    println!("concatenated {:?}", concatenated);
     let layer_2 = Sha3::hash(&concatenated);
     let layer_3 = Sha3::hash(&[layer_2.as_ref(), layer_2.as_ref()].concat());
-    assert_eq!(null_hashes[0], leaf);
-    assert_eq!(null_hashes[1], layer_2);
-    assert_eq!(null_hashes[2], layer_3);
+    assert_eq!(null_hashes[64], leaf);
+    assert_eq!(null_hashes[63], layer_2);
+    assert_eq!(null_hashes[62], layer_3);
 }
 
 #[test]
 fn test_key_iter() {
     let hash: [u8; 2] = [17, 24];
     // 00010001 00011000
-    let expected = [false, false, false, true, false, false, false, true, false, false, false, true, true, false, false, false];
+    let expected = [
+        false, false, false, true, false, false, false, true, false, false, false, true, true,
+        false, false, false,
+    ];
     let key = Key::new(hash);
     for (bit, expected) in key.iter().zip(expected.iter()) {
         assert_eq!(&bit, expected);
     }
 }
+
+#[test]
+fn test_empty_sparse_merkle() {
+    let depth = 4;
+    let null_hashes = compute_null_hashes::<Sha3>(depth);
+    let root = null_hashes[0];
+    let memory_db = MemoryDB::<Sha3, NoopKey<Sha3>, Vec<u8>>::default();
+    let tree_db = TreeDBBuilder::<Sha3>::new(&memory_db, &root, depth).build();
+    let test_value = tree_db.get_value(&[0, 0, 0, 0]).unwrap();
+    let test_leaf = tree_db.get_leaf(&[0, 0, 0, 0]).unwrap();
+    let _test_proof = tree_db.get_proof(&[0, 0, 0, 0]).unwrap();
+    assert_eq!(test_value, []);
+    assert_eq!(test_leaf, Sha3::hash(&[]));
+}
+
+#[test]
+fn test_sparse_merkle_tree() {
+    let depth = 3;
+    let null_hashes = compute_null_hashes::<Sha3>(depth);
+    let mut root = null_hashes[0];
+    let mut memory_db = MemoryDB::<Sha3, NoopKey<Sha3>, Vec<u8>>::default();
+    let mut tree_db_mut = TreeDBMutBuilder::<Sha3>::new(&mut memory_db, &mut root, depth).build();
+    let values = test_values();
+    let keys = test_keys();
+    for (key, value) in keys.iter().zip(values.iter()) {
+        tree_db_mut.insert(key, value.to_le_bytes().to_vec()).unwrap();
+    }
+    let root = tree_db_mut.root();
+    let (_, _, _, expected_root) = build_data();
+    assert_eq!(root, &expected_root); 
+}
+
+

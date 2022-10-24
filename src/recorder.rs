@@ -2,6 +2,7 @@ use crate::{Hasher, Node, StorageProof, TreeRecorder};
 
 /// Record node accesses.
 pub struct Recorder<H: Hasher> {
+    // TODO recorder should use a set
     nodes: Vec<Node<H>>,
 }
 

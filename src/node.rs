@@ -196,3 +196,16 @@ pub fn decode_hash<H: Hasher>(data: &[u8]) -> Result<H::Out, TreeError> {
     hash.as_mut().copy_from_slice(data);
     Ok(hash)
 }
+
+pub fn compute_null_hashes<H: Hasher>(depth: usize) -> Vec<H::Out> {
+    (0..depth + 1)
+        .scan(H::hash(&[]), |null_hash, _| {
+            let value = *null_hash;
+            *null_hash = H::hash(&[null_hash.as_ref(), null_hash.as_ref()].concat());
+            Some(value)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}

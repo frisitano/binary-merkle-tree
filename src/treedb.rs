@@ -1,5 +1,6 @@
 use crate::{
-    indices, DBValue, HashDBRef, Hasher, Node, Tree, TreeError, TreeRecorder, EMPTY_PREFIX,
+    compute_null_hashes, indices, DBValue, HashDBRef, Hasher, Node, NodeHash, Tree, TreeError,
+    TreeRecorder, Value, EMPTY_PREFIX,
 };
 
 pub struct TreeDBBuilder<'db, H: Hasher> {
@@ -36,12 +37,13 @@ impl<'db, H: Hasher> TreeDBBuilder<'db, H> {
     }
 
     pub fn build(self) -> TreeDB<'db, H> {
-        TreeDB::new(
-            self.db,
-            self.root,
-            self.depth,
-            self.recorder.map(core::cell::RefCell::new),
-        )
+        TreeDB {
+            db: self.db,
+            root: self.root,
+            depth: self.depth,
+            recorder: self.recorder.map(core::cell::RefCell::new),
+            null_hashes: compute_null_hashes::<H>(self.depth)
+        }
     }
 }
 
@@ -59,35 +61,27 @@ pub struct TreeDB<'a, H: Hasher> {
 }
 
 impl<'a, H: Hasher> TreeDB<'a, H> {
-    pub fn new(
-        db: &'a dyn HashDBRef<H, DBValue>,
-        root: &'a H::Out,
-        depth: usize,
-        recorder: Option<core::cell::RefCell<&'a mut dyn TreeRecorder<H>>>,
-    ) -> TreeDB<'a, H> {
-        let null_hashes: Vec<H::Out> = (0..64)
-            .scan([], |null_hash, _| Some(H::hash(null_hash)))
-            .collect();
-
-        TreeDB {
-            db,
-            root,
-            depth,
-            recorder,
-            null_hashes,
-        }
-    }
-
     /// Get the backing database.
     pub fn db(&self) -> &dyn HashDBRef<H, DBValue> {
         self.db
     }
 
-    pub fn lookup(&self, key: &H::Out) -> Result<Node<H>, TreeError> {
-        let data = self
-            .db
-            .get(key, EMPTY_PREFIX)
-            .ok_or(TreeError::DataNotFound)?;
+    pub fn lookup(&self, key: &H::Out, depth: usize) -> Result<Node<H>, TreeError> {
+        let data = if let Some(value) = self.db.get(key, EMPTY_PREFIX) {
+            value
+        } else {
+            if depth == self.depth && key == &self.null_hashes[depth] {
+                return Ok(Node::Value(Value::Cached(DBValue::new())));
+            } else if key == &self.null_hashes[depth] {
+                let null_hash = self.null_hashes[depth + 1];
+                return Ok(Node::Inner(
+                    NodeHash::Hash(null_hash),
+                    NodeHash::Hash(null_hash),
+                ));
+            } else {
+                return Err(TreeError::UnexpectedError);
+            }
+        };
 
         let node: Node<H> = data.try_into()?;
         self.recorder
@@ -101,11 +95,11 @@ impl<'a, H: Hasher> TreeDB<'a, H> {
         // if index < 1 || (1 << self.depth) * 3 <= index {
         //     return Err(TreeError::IndexOutOfBounds);
         // }
-        let mut current_node = self.lookup(self.root)?;
+        let mut current_node = self.lookup(self.root, 0)?;
 
-        for &bit in key {
+        for (depth, &bit) in key.iter().enumerate() {
             let key = current_node.get_child(bit)?.get_hash();
-            current_node = self.lookup(key)?;
+            current_node = self.lookup(key, depth + 1)?;
         }
 
         Ok(current_node)
@@ -154,7 +148,7 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
         let mut proof = Vec::new();
         proof.push((1, self.root.as_ref().to_vec()));
 
-        let mut current_node = self.lookup(self.root)?;
+        let mut current_node = self.lookup(self.root, 0)?;
 
         for (i, &bit) in key.iter().enumerate() {
             let index = indices::compute_index(&key[..i + 1]);
@@ -166,7 +160,7 @@ impl<'a, H: Hasher> Tree<H> for TreeDB<'a, H> {
                 } else {
                     right.get_hash()
                 };
-                current_node = self.lookup(key)?;
+                current_node = self.lookup(key, i + 1)?;
 
                 proof.extend_from_slice(&[
                     (left_index, left.get_hash().as_ref().to_vec()),
